@@ -79,6 +79,31 @@ a:hover { text-decoration: underline; }
 .empty { padding: 24px; text-align: center; color: var(--muted); }
 footer { padding: 16px 32px 32px; color: var(--muted); }
 
+.topnav { margin-bottom: 12px; }
+.topnav a {
+  display: inline-block; margin-right: 6px; padding: 4px 12px;
+  border-radius: 6px; color: var(--muted); font-size: 13px;
+  text-decoration: none; border: 1px solid transparent;
+}
+.topnav a:hover  { background: #1c2129; color: var(--text); }
+.topnav a.active { background: #1c2129; color: var(--text);
+                   border-color: var(--border); }
+.badge {
+  display: inline-block; margin-left: 4px; padding: 0 6px;
+  background: var(--link); color: #fff; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+
+#add-form { display: inline-flex; gap: 6px; }
+#add-input {
+  background: #0d1117; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 200px;
+  text-transform: uppercase;
+}
+button.danger { background: var(--bear); }
+.star.remove { color: var(--bear); font-weight: 700; }
+.star.remove:hover { filter: brightness(1.3); }
+
 /* deltas + sparkline + catalysts */
 .delta, .z, .mentions { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .bold { font-weight: 700; }

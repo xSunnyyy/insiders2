@@ -8,6 +8,10 @@
 </head>
 <body>
   <header>
+    <nav class="topnav">
+      <a href="/" class="active">Top 20</a>
+      <a href="/watchlist">Watchlist <span id="wl-count" class="badge" hidden></span></a>
+    </nav>
     <h1>Social Stock Sentiment</h1>
     <div class="subtitle">
       Top 20 most-mentioned tickers across Reddit, Stocktwits, Bluesky
@@ -61,7 +65,14 @@
 
   function saveWL() {
     localStorage.setItem(WL_KEY, JSON.stringify([...WATCHLIST]));
+    const b = document.getElementById("wl-count");
+    if (b) {
+      if (WATCHLIST.size > 0) { b.textContent = WATCHLIST.size; b.hidden = false; }
+      else                    { b.hidden = true; }
+    }
   }
+  // Run once on load so badge is correct before first render
+  saveWL();
 
   function deltaCell(v) {
     if (v == null) return `<span class="muted">—</span>`;

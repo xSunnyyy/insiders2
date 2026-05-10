@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Watchlist — Social Stock Sentiment</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <nav class="topnav">
+      <a href="/">Top 20</a>
+      <a href="/watchlist" class="active">Watchlist</a>
+    </nav>
+    <h1>Watchlist</h1>
+    <div class="subtitle">
+      Your pinned tickers, with current quote, sentiment, and catalysts.
+      Stored in your browser (localStorage).
+    </div>
+    <div class="controls">
+      <form id="add-form">
+        <input id="add-input" type="text" placeholder="Add ticker (e.g. AAPL)"
+               autocomplete="off" maxlength="8" />
+        <button type="submit">Add</button>
+      </form>
+      <button id="refresh">Refresh</button>
+      <button id="clear-all" class="danger">Clear all</button>
+      <span id="status"></span>
+    </div>
+  </header>
+
+  <main>
+    <table id="board">
+      <thead>
+        <tr>
+          <th></th>
+          <th>Ticker</th>
+          <th>Price</th>
+          <th>Change %</th>
+          <th>Mentions</th>
+          <th>Sentiment</th>
+          <th>Trend</th>
+          <th>Catalyst</th>
+          <th>In top 20?</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>
+      Watchlist is empty. Add a ticker above, or star one from the
+      <a href="/">Top 20</a>.
+    </div>
+  </main>
+
+  <footer>
+    <small>
+      Click a ticker for the drill-down. Watchlist syncs to the server
+      best-effort but lives in <code>localStorage</code>, so it survives
+      cold starts on stateless hosts. Not financial advice.
+    </small>
+  </footer>
+
+  <script>
+  const $ = (s) => document.querySelector(s);
+  const WL_KEY = "stocksent.watchlist.v1";
+
+  function load() { return JSON.parse(localStorage.getItem(WL_KEY) || "[]"); }
+  function save(arr) { localStorage.setItem(WL_KEY, JSON.stringify(arr)); }
+
+  function fmt(n, d=2) { return n == null ? "—" : Number(n).toFixed(d); }
+
+  function chgCell(v) {
+    if (v == null) return `<span class="muted">—</span>`;
+    const cls = v > 0 ? "bull" : (v < 0 ? "bear" : "neu");
+    const sign = v > 0 ? "+" : "";
+    return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+  }
+
+  function trendCell(t) {
+    return `<span class="trend ${t || "neutral"}">${t || "neutral"}</span>`;
+  }
+
+  function catalystCell(t) {
+    if (!t.catalyst_summary && !(t.news && t.news[0])) {
+      return `<span class="muted">—</span>`;
+    }
+    const parts = [];
+    if (t.earnings_days_out != null && t.earnings_days_out >= 0
+        && t.earnings_days_out <= 14) {
+      parts.push(`<span class="catalyst er">ER in ${t.earnings_days_out}d</span>`);
+    }
+    if (t.news && t.news[0]) {
+      const h = t.news[0];
+      const age = h.age_hours != null ? ` <span class="muted">(${h.age_hours}h)</span>` : "";
+      parts.push(`<a href="${h.url}" target="_blank" rel="noopener">${h.title.replace(/</g,'&lt;').slice(0,72)}</a>${age}`);
+    }
+    return parts.join(" ");
+  }
+
+  function removeSymbol(sym) {
+    const arr = load().filter(s => s !== sym);
+    save(arr);
+    // Best-effort server sync
+    fetch(`/api/watchlist/${encodeURIComponent(sym)}`,
+          {method: "DELETE"}).catch(() => {});
+    render();
+  }
+
+  function clearAll() {
+    if (!confirm("Remove all watchlist tickers?")) return;
+    const arr = load();
+    save([]);
+    arr.forEach(s => fetch(`/api/watchlist/${encodeURIComponent(s)}`,
+                           {method: "DELETE"}).catch(() => {}));
+    render();
+  }
+
+  async function addSymbol(sym) {
+    sym = (sym || "").trim().toUpperCase();
+    if (!sym || !/^[A-Z]{1,6}(\.[A-Z])?$/.test(sym)) {
+      $("#status").textContent = "Enter 1–6 letters (e.g. AAPL or BRK.B).";
+      return;
+    }
+    const arr = load();
+    if (!arr.includes(sym)) {
+      arr.push(sym);
+      save(arr);
+      fetch(`/api/watchlist`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({symbol: sym})
+      }).catch(() => {});
+    }
+    $("#add-input").value = "";
+    render();
+  }
+
+  async function render() {
+    const wl = load();
+    $("#empty").hidden = wl.length > 0;
+    const tbody = $("#board tbody");
+
+    if (!wl.length) {
+      tbody.innerHTML = "";
+      $("#status").textContent = "";
+      return;
+    }
+
+    $("#status").textContent = "Loading…";
+    try {
+      const r = await fetch("/api/watchlist/data", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({symbols: wl}),
+      });
+      const j = await r.json();
+      tbody.innerHTML = "";
+
+      // Preserve user-order from localStorage
+      const byS = Object.fromEntries((j.tickers || []).map(t => [t.symbol, t]));
+      wl.forEach(sym => {
+        const t = byS[sym] || {symbol: sym};
+        const inTop = t.in_top20
+          ? `<span class="bull">yes</span>`
+          : `<span class="muted">no</span>`;
+        const tr = document.createElement("tr");
+        tr.classList.add("trend-" + (t.trend || "neutral"));
+        tr.innerHTML = `
+          <td class="star-cell"><span class="star remove" title="Remove">✕</span></td>
+          <td class="ticker"><a href="/ticker/${t.symbol}">${t.symbol}</a></td>
+          <td class="price">${t.price == null ? `<span class="muted">—</span>` : fmt(t.price)}</td>
+          <td class="chg">${chgCell(t.change_pct)}</td>
+          <td class="mentions">${t.mentions ?? 0}</td>
+          <td><span class="score">${fmt(t.avg_sentiment, 2)}</span></td>
+          <td>${trendCell(t.trend)}</td>
+          <td class="catalyst-cell">${catalystCell(t)}</td>
+          <td>${inTop}</td>
+        `;
+        tr.querySelector(".remove").addEventListener("click", () => removeSymbol(sym));
+        tbody.appendChild(tr);
+      });
+      $("#status").textContent =
+        `Updated ${new Date((j.generated_at||Date.now()/1000)*1000).toLocaleString()}`;
+    } catch (e) {
+      $("#status").textContent = "Error: " + e.message;
+    }
+  }
+
+  $("#add-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    addSymbol($("#add-input").value);
+  });
+  $("#refresh").addEventListener("click", () => render());
+  $("#clear-all").addEventListener("click", clearAll);
+
+  render();
+  </script>
+</body>
+</html>
