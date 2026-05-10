@@ -12,6 +12,7 @@ Pipeline per refresh:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -25,6 +26,12 @@ from sentiment import label, score
 from tickers import extract_tickers
 
 LOG = logging.getLogger(__name__)
+
+# Reddit comment fetching is by far the slowest stage (9 subs * 10 posts * 1
+# request each, plus rate-limit sleeps). Off by default so the full pipeline
+# fits comfortably in serverless timeouts; override on long-running hosts.
+FETCH_COMMENTS = os.environ.get("REDDIT_FETCH_COMMENTS", "0") == "1"
+REDDIT_PER_SUB = int(os.environ.get("REDDIT_PER_SUB", "30"))
 
 
 @dataclass
@@ -111,7 +118,10 @@ def _scrape_all() -> tuple[dict[str, TickerStats], list[str]]:
     sources_used: list[str] = []
 
     try:
-        reddit_items = reddit.fetch_all()
+        reddit_items = reddit.fetch_all(
+            per_sub=REDDIT_PER_SUB,
+            include_comments=FETCH_COMMENTS,
+        )
         err = reddit.last_error()
         if reddit_items:
             tag = " via pullpush" if err and err.startswith("4") else ""

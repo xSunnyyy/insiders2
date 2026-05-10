@@ -117,8 +117,33 @@ python app.py            # then open http://localhost:5000
 Optional:
 
 ```bash
-export TWITTER_BEARER_TOKEN=...   # enables the Twitter source
+export TWITTER_BEARER_TOKEN=...      # enables the Twitter source
+export REDDIT_FETCH_COMMENTS=1       # also pull top-level comments (slower)
+export REDDIT_PER_SUB=50             # posts per subreddit (default 30)
+export DB_PATH=/var/data/data.sqlite3  # override SQLite location
 ```
+
+## Deploying to Vercel (free tier)
+
+The repo includes `vercel.json` and `api/index.py`. The Hobby plan caps
+serverless functions at 60 s and gives a read-only filesystem outside
+`/tmp`, so the app runs in a degraded mode there:
+
+- SQLite writes to `/tmp/data.sqlite3` (writable on Vercel/AWS Lambda).
+  The file is wiped on cold starts -- history columns populate **only
+  while the function is warm** (~15 min) and reset between idle periods.
+  For full multi-day history, run on a host with a real disk (Railway,
+  Fly.io, Render, a $5 VPS).
+- Reddit comment fetching is off by default (the slowest stage). The
+  ranking still works on post bodies + Stocktwits + Bluesky.
+- Watchlist is stored in `localStorage` (in your browser), so it
+  persists across cold starts even though the server doesn't.
+- Alerts dedupe relies on the DB. If the DB is wiped, dedupe also
+  resets, so alerts may fire again after a cold start. To avoid spam,
+  configure conservative thresholds or skip alerts on Vercel.
+
+To deploy: push the repo to GitHub, import in Vercel, and set the
+optional env vars under **Project Settings → Environment Variables**.
 
 ## API
 
