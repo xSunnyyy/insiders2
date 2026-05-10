@@ -17,6 +17,13 @@ top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
 > the Twitter source silently returns nothing — Reddit + Stocktwits still
 > produce a useful ranking on their own.
 
+## Live quotes
+
+Stocktwits' free messaging API doesn't return prices, so the dashboard pulls
+**price + change %** for the top-20 tickers from Yahoo Finance's
+unauthenticated v8 chart endpoint (`prices.py`). Quotes are fetched in
+parallel and cached alongside the rest of the snapshot (5-min TTL).
+
 ## How sentiment is decided
 
 - **Stocktwits** messages often carry an explicit `Bullish` / `Bearish` tag the
