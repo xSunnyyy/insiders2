@@ -12,6 +12,7 @@
     <div class="subtitle">
       Top 20 most-mentioned tickers across Reddit, Stocktwits, Bluesky
       <span id="twitter-status"></span>.
+      <span id="alert-channels"></span>
     </div>
     <div class="controls">
       <button id="refresh">Refresh now</button>
@@ -23,16 +24,20 @@
     <table id="board">
       <thead>
         <tr>
+          <th></th>
           <th>#</th>
           <th>Ticker</th>
           <th>Price</th>
           <th>Change %</th>
           <th>Mentions</th>
-          <th>Bullish</th>
-          <th>Bearish</th>
-          <th>Neutral</th>
+          <th>Δ1h</th>
+          <th>Δ24h</th>
+          <th>z</th>
+          <th>24h activity</th>
           <th>Sentiment</th>
+          <th>ΔSent 24h</th>
           <th>Trend</th>
+          <th>Catalyst</th>
           <th>Sources</th>
         </tr>
       </thead>
@@ -43,63 +48,145 @@
 
   <footer>
     <small>
-      Sentiment is lexicon-based (Stocktwits uses poster-tagged Bullish/Bearish
-      where present). Cache TTL: 5 min. Not financial advice.
+      Click a ticker for the drill-down. Click ★ to add to your watchlist.
+      Sentiment backend: <span id="sentiment-backend">…</span>.
+      Cache TTL: 5 min. Not financial advice.
     </small>
   </footer>
 
   <script>
   const $ = (s) => document.querySelector(s);
+  let WATCHLIST = new Set();
+
+  function deltaCell(v) {
+    if (v == null) return `<span class="muted">—</span>`;
+    if (v === 0)  return `<span class="muted">0</span>`;
+    const cls = v > 0 ? "bull" : "bear";
+    const sign = v > 0 ? "+" : "";
+    return `<span class="${cls}">${sign}${v}</span>`;
+  }
+
+  function zCell(v) {
+    if (v == null) return `<span class="muted">—</span>`;
+    const cls = v >= 3 ? "bull bold" : (v <= -2 ? "bear" : "muted");
+    const sign = v > 0 ? "+" : "";
+    return `<span class="${cls}">${sign}${v.toFixed(1)}σ</span>`;
+  }
+
+  function sparklineSVG(arr) {
+    if (!arr || arr.length === 0) return "";
+    const max = Math.max(1, ...arr);
+    const w = 80, h = 18;
+    const dx = w / Math.max(arr.length - 1, 1);
+    const pts = arr.map((v, i) => `${(i*dx).toFixed(1)},${(h - (v/max)*h).toFixed(1)}`).join(" ");
+    return `<svg class="spark" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+      <polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}"/>
+    </svg>`;
+  }
+
+  function priceCell(t) {
+    if (t.price == null) return `<span class="muted">—</span>`;
+    return `${t.price.toFixed(2)}`;
+  }
+
+  function chgCell(v) {
+    if (v == null) return `<span class="muted">—</span>`;
+    const cls = v > 0 ? "bull" : (v < 0 ? "bear" : "neu");
+    const sign = v > 0 ? "+" : "";
+    return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
+  }
 
   function pct(stat) {
     const total = stat.bullish + stat.bearish + stat.neutral;
     return total === 0 ? 0 : Math.round(100 * stat.bullish / total);
   }
 
+  function catalystCell(t) {
+    if (!t.catalyst_summary) return `<span class="muted">—</span>`;
+    const parts = [];
+    if (t.earnings_days_out != null && t.earnings_days_out >= 0
+        && t.earnings_days_out <= 14) {
+      const d = t.earnings_days_out;
+      const tag = d === 0 ? "ER today" : `ER in ${d}d`;
+      parts.push(`<span class="catalyst er">${tag}</span>`);
+    }
+    if (t.news && t.news[0]) {
+      const h = t.news[0];
+      const age = h.age_hours != null ? ` <span class="muted">(${h.age_hours}h)</span>` : "";
+      const url = h.url || "#";
+      parts.push(`<a href="${url}" target="_blank" rel="noopener" title="${h.publisher}">${h.title.replace(/</g,'&lt;').slice(0,72)}</a>${age}`);
+    }
+    return parts.join(" ");
+  }
+
+  async function toggleWatchlist(sym) {
+    if (WATCHLIST.has(sym)) {
+      const r = await fetch(`/api/watchlist/${encodeURIComponent(sym)}`, {method: "DELETE"});
+      const j = await r.json(); WATCHLIST = new Set(j.watchlist || []);
+    } else {
+      const r = await fetch(`/api/watchlist`, {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({symbol: sym})
+      });
+      const j = await r.json(); WATCHLIST = new Set(j.watchlist || []);
+    }
+    document.querySelectorAll(`tr[data-sym]`).forEach(tr => {
+      const s = tr.getAttribute("data-sym");
+      const star = tr.querySelector(".star");
+      if (star) star.textContent = WATCHLIST.has(s) ? "★" : "☆";
+    });
+  }
+
   function render(data) {
-    const tw = data.twitter_enabled
-      ? " and Twitter/X"
-      : " (Twitter/X disabled — set TWITTER_BEARER_TOKEN to enable)";
-    $("#twitter-status").textContent = tw;
+    WATCHLIST = new Set(data.watchlist || []);
+    $("#twitter-status").textContent = data.twitter_enabled
+      ? " and Twitter/X" : " (Twitter/X disabled)";
+
+    const ch = data.alert_channels || [];
+    $("#alert-channels").textContent = ch.length
+      ? ` Alerts → ${ch.join(", ")}.` : " No alert channels configured.";
 
     const tbody = $("#board tbody");
     tbody.innerHTML = "";
-    if (!data.tickers || data.tickers.length === 0) {
-      $("#empty").hidden = false;
-    } else {
-      $("#empty").hidden = true;
-    }
+    $("#empty").hidden = !!(data.tickers && data.tickers.length);
 
     data.tickers.forEach((t, i) => {
       const tr = document.createElement("tr");
       tr.classList.add("trend-" + t.trend);
+      tr.setAttribute("data-sym", t.symbol);
       const bar = pct(t);
-      const priceCell = (t.price == null)
-        ? `<span class="muted">—</span>`
-        : `${t.price.toFixed(2)}`;
-      let chgCell = `<span class="muted">—</span>`;
-      if (t.change_pct != null) {
-        const cls = t.change_pct > 0 ? "bull" : (t.change_pct < 0 ? "bear" : "neu");
-        const sign = t.change_pct > 0 ? "+" : "";
-        chgCell = `<span class="${cls}">${sign}${t.change_pct.toFixed(2)}%</span>`;
-      }
+      const starred = WATCHLIST.has(t.symbol);
       tr.innerHTML = `
+        <td class="star-cell"><span class="star" role="button" tabindex="0">${starred ? "★" : "☆"}</span></td>
         <td>${i + 1}</td>
-        <td class="ticker">${t.symbol}</td>
-        <td class="price">${priceCell}</td>
-        <td class="chg">${chgCell}</td>
-        <td>${t.mentions}</td>
-        <td class="bull">${t.bullish}</td>
-        <td class="bear">${t.bearish}</td>
-        <td class="neu">${t.neutral}</td>
+        <td class="ticker"><a href="/ticker/${t.symbol}">${t.symbol}</a></td>
+        <td class="price">${priceCell(t)}</td>
+        <td class="chg">${chgCell(t.change_pct)}</td>
+        <td class="mentions">${t.mentions}</td>
+        <td class="delta">${deltaCell(t.delta_mentions_1h)}</td>
+        <td class="delta">${deltaCell(t.delta_mentions_24h)}</td>
+        <td class="z">${zCell(t.z_score)}</td>
+        <td class="spark-cell">${sparklineSVG(t.sparkline)}</td>
         <td>
           <div class="bar"><div class="bar-fill" style="width:${bar}%"></div></div>
           <span class="score">${t.avg_sentiment.toFixed(2)}</span>
         </td>
+        <td class="delta">${t.delta_sentiment_24h == null
+          ? `<span class="muted">—</span>`
+          : (t.delta_sentiment_24h > 0
+              ? `<span class="bull">+${t.delta_sentiment_24h.toFixed(2)}</span>`
+              : (t.delta_sentiment_24h < 0
+                  ? `<span class="bear">${t.delta_sentiment_24h.toFixed(2)}</span>`
+                  : `<span class="muted">0.00</span>`))}</td>
         <td class="trend ${t.trend}">${t.trend}</td>
+        <td class="catalyst-cell">${catalystCell(t)}</td>
         <td class="sources">${Object.entries(t.sources)
           .map(([k, v]) => `${k}:${v}`).join(", ")}</td>
       `;
+      tr.querySelector(".star").addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleWatchlist(t.symbol);
+      });
       tbody.appendChild(tr);
     });
 
