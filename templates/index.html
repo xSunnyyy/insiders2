@@ -56,7 +56,12 @@
 
   <script>
   const $ = (s) => document.querySelector(s);
-  let WATCHLIST = new Set();
+  const WL_KEY = "stocksent.watchlist.v1";
+  let WATCHLIST = new Set(JSON.parse(localStorage.getItem(WL_KEY) || "[]"));
+
+  function saveWL() {
+    localStorage.setItem(WL_KEY, JSON.stringify([...WATCHLIST]));
+  }
 
   function deltaCell(v) {
     if (v == null) return `<span class="muted">—</span>`;
@@ -119,16 +124,19 @@
     return parts.join(" ");
   }
 
-  async function toggleWatchlist(sym) {
+  function toggleWatchlist(sym) {
+    if (WATCHLIST.has(sym)) WATCHLIST.delete(sym);
+    else                    WATCHLIST.add(sym);
+    saveWL();
+    // Best-effort server sync (works on long-running hosts; no-ops on Vercel).
     if (WATCHLIST.has(sym)) {
-      const r = await fetch(`/api/watchlist/${encodeURIComponent(sym)}`, {method: "DELETE"});
-      const j = await r.json(); WATCHLIST = new Set(j.watchlist || []);
-    } else {
-      const r = await fetch(`/api/watchlist`, {
+      fetch(`/api/watchlist`, {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({symbol: sym})
-      });
-      const j = await r.json(); WATCHLIST = new Set(j.watchlist || []);
+      }).catch(() => {});
+    } else {
+      fetch(`/api/watchlist/${encodeURIComponent(sym)}`,
+            {method: "DELETE"}).catch(() => {});
     }
     document.querySelectorAll(`tr[data-sym]`).forEach(tr => {
       const s = tr.getAttribute("data-sym");
@@ -138,7 +146,11 @@
   }
 
   function render(data) {
-    WATCHLIST = new Set(data.watchlist || []);
+    // Merge any server-side watchlist into local (server may be empty on
+    // stateless hosts; local is the source of truth).
+    (data.watchlist || []).forEach(s => WATCHLIST.add(s));
+    saveWL();
+
     $("#twitter-status").textContent = data.twitter_enabled
       ? " and Twitter/X" : " (Twitter/X disabled)";
 
