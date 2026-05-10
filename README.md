@@ -7,7 +7,7 @@ top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
 
 | Platform     | Method                                                                           | Status |
 |--------------|----------------------------------------------------------------------------------|--------|
-| Reddit       | OAuth API on `wallstreetbets`, `stocks`, `investing`, `StockMarket`, `options`, `pennystocks`, `Daytrading`, `Superstonk`, `stock_picks` (falls back to public `.json`) | OAuth recommended |
+| Reddit       | OAuth API on `wallstreetbets`, `stocks`, `investing`, `StockMarket`, `options`, `pennystocks`, `Daytrading`, `Superstonk`, `stock_picks`. Falls back to public `.json`, then to **Pullpush.io** (Pushshift mirror, no auth needed). | works without a key |
 | Stocktwits   | Public `api.stocktwits.com/api/2` trending + per-symbol streams                  | works (no key) |
 | Bluesky      | Public AppView `app.bsky.feed.searchPosts` (no auth)                             | works (no key) |
 | Twitter / X  | v2 `recent search` endpoint (paid). Set `TWITTER_BEARER_TOKEN` to enable.        | opt-in |

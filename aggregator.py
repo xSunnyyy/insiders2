@@ -102,10 +102,15 @@ def run(top_n: int = 20) -> dict:
     try:
         reddit_items = reddit.fetch_all()
         err = reddit.last_error()
-        label_str = f"reddit({len(reddit_items)})"
-        if reddit_items == [] and err:
-            label_str = f"reddit(0; {err})"
-        sources_used.append(label_str)
+        if reddit_items:
+            # Items came through; show a fallback marker if Reddit itself
+            # failed but Pullpush rescued us.
+            tag = " via pullpush" if err and err.startswith("4") else ""
+            sources_used.append(f"reddit({len(reddit_items)}{tag})")
+        elif err:
+            sources_used.append(f"reddit(0; {err})")
+        else:
+            sources_used.append("reddit(0)")
         _process(reddit_items, stats)
     except Exception as e:
         LOG.exception("reddit scrape failed: %s", e)
