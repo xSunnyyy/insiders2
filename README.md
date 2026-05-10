@@ -7,8 +7,9 @@ top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
 
 | Platform     | Method                                                                           | Status |
 |--------------|----------------------------------------------------------------------------------|--------|
-| Reddit       | Public `.json` endpoints on `wallstreetbets`, `stocks`, `investing`, etc.        | works (no key) |
+| Reddit       | Public `.json` endpoints on `wallstreetbets`, `stocks`, `investing`, `StockMarket`, `options`, `pennystocks`, `Daytrading`, `Superstonk`, `stock_picks` | works (no key) |
 | Stocktwits   | Public `api.stocktwits.com/api/2` trending + per-symbol streams                  | works (no key) |
+| Bluesky      | Public AppView `app.bsky.feed.searchPosts` (no auth)                             | works (no key) |
 | Twitter / X  | v2 `recent search` endpoint (paid). Set `TWITTER_BEARER_TOKEN` to enable.        | opt-in |
 
 > Twitter no longer permits free anonymous scraping (`snscrape` and the

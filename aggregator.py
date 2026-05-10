@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from scrapers import reddit, stocktwits, twitter
+from scrapers import bluesky, reddit, stocktwits, twitter
 from sentiment import label, score
 from tickers import extract_tickers
 
@@ -111,6 +111,13 @@ def run(top_n: int = 20) -> dict:
         _process(st_items, stats)
     except Exception as e:
         LOG.exception("stocktwits scrape failed: %s", e)
+
+    try:
+        bs_items = bluesky.fetch_all()
+        sources_used.append(f"bluesky({len(bs_items)})")
+        _process(bs_items, stats)
+    except Exception as e:
+        LOG.exception("bluesky scrape failed: %s", e)
 
     if twitter.is_enabled():
         try:
