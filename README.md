@@ -7,7 +7,7 @@ top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
 
 | Platform     | Method                                                                           | Status |
 |--------------|----------------------------------------------------------------------------------|--------|
-| Reddit       | Public `.json` endpoints on `wallstreetbets`, `stocks`, `investing`, `StockMarket`, `options`, `pennystocks`, `Daytrading`, `Superstonk`, `stock_picks` | works (no key) |
+| Reddit       | OAuth API on `wallstreetbets`, `stocks`, `investing`, `StockMarket`, `options`, `pennystocks`, `Daytrading`, `Superstonk`, `stock_picks`. Falls back to public `.json`, then to **Pullpush.io** (Pushshift mirror, no auth needed). | works without a key |
 | Stocktwits   | Public `api.stocktwits.com/api/2` trending + per-symbol streams                  | works (no key) |
 | Bluesky      | Public AppView `app.bsky.feed.searchPosts` (no auth)                             | works (no key) |
 | Twitter / X  | v2 `recent search` endpoint (paid). Set `TWITTER_BEARER_TOKEN` to enable.        | opt-in |
@@ -16,6 +16,28 @@ top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
 > guest-token flows have been broken since 2023). Without a paid bearer token
 > the Twitter source silently returns nothing — Reddit + Stocktwits still
 > produce a useful ranking on their own.
+
+## Reddit OAuth (strongly recommended)
+
+Since the 2023 API changes, Reddit aggressively blocks unauthenticated
+requests from datacenter IPs and generic UAs. If your dashboard shows
+`reddit(0; 403 anon)` or similar, you need OAuth credentials. They're
+**free**:
+
+1. Visit https://www.reddit.com/prefs/apps → **create another app**
+2. Pick type **script**. Set redirect URI to `http://localhost:8080`
+3. Copy the **client ID** (under the app name) and the **secret**
+
+Then export before running:
+
+```bash
+export REDDIT_CLIENT_ID=...
+export REDDIT_CLIENT_SECRET=...
+export REDDIT_USER_AGENT="linux:stock-sentiment:0.1 (by /u/yourname)"
+```
+
+The scraper transparently switches to `oauth.reddit.com` when these are
+set. App-only tokens give you 100 requests/min, plenty for this workload.
 
 ## Live quotes
 
