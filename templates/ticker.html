@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ symbol }} — Sentiment Drill-down</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <div><a href="/">← back to top 20</a></div>
+    <h1 id="title">{{ symbol }}</h1>
+    <div id="head" class="subtitle muted">Loading…</div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <h2>History (last 7 days)</h2>
+      <div id="charts" class="charts"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Recent news</h2>
+      <ul id="news"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>Recent messages from social</h2>
+      <table id="msgs">
+        <thead><tr>
+          <th>When</th><th>Source</th><th>Sentiment</th><th>Engagement</th><th>Text</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="msgs-empty" class="empty" hidden>No stored messages yet — refresh the dashboard.</div>
+    </section>
+  </main>
+
+  <script>
+  const SYM = {{ symbol|tojson }};
+  const $  = (s) => document.querySelector(s);
+
+  function lineChart(values, accessor, color, ylabel) {
+    if (!values.length) return `<div class="empty muted">No data yet for ${ylabel}.</div>`;
+    const w = 600, h = 120, pad = 24;
+    const xs = values.map(v => v.ts);
+    const ys = values.map(accessor);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs);
+    const y0 = Math.min(...ys, 0), y1 = Math.max(...ys, 0.0001);
+    const xr = Math.max(x1 - x0, 1);
+    const yr = Math.max(y1 - y0, 0.0001);
+    const sx = t => pad + (t - x0) / xr * (w - 2*pad);
+    const sy = v => h - pad - (v - y0) / yr * (h - 2*pad);
+    const pts = values.map(v => `${sx(v.ts).toFixed(1)},${sy(accessor(v)).toFixed(1)}`).join(" ");
+    const zeroY = sy(0);
+    return `<div class="chart">
+      <div class="ylabel">${ylabel}</div>
+      <svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+        <line x1="${pad}" x2="${w-pad}" y1="${zeroY}" y2="${zeroY}" stroke="#30363d" stroke-dasharray="2,2"/>
+        <polyline fill="none" stroke="${color}" stroke-width="1.5" points="${pts}"/>
+      </svg>
+    </div>`;
+  }
+
+  function fmtTs(s) {
+    return new Date(s * 1000).toLocaleString();
+  }
+
+  function sentClass(s) {
+    if (s == null) return "muted";
+    if (s >= 0.15) return "bull";
+    if (s <= -0.15) return "bear";
+    return "neu";
+  }
+
+  function renderHead(j) {
+    const r = j.row || {};
+    const price = r.price != null ? r.price.toFixed(2) : "—";
+    const chgV = r.change_pct;
+    const chg = chgV == null ? "" :
+      `<span class="${chgV > 0 ? 'bull' : (chgV < 0 ? 'bear' : 'neu')}">
+         ${chgV > 0 ? '+' : ''}${chgV.toFixed(2)}%</span>`;
+    const ws = new Set(j.watchlist || []);
+    const star = ws.has(SYM) ? "★ in watchlist" : "☆ add to watchlist";
+    const er = (r.earnings_days_out != null && r.earnings_days_out >= 0)
+      ? `· <span class="catalyst er">ER in ${r.earnings_days_out}d (${r.earnings_date})</span>` : "";
+    const inTop = r.in_top20 ? "" : ` · <span class="muted">not in top 20 right now</span>`;
+
+    $("#head").innerHTML = `
+      Price ${price} ${chg} ·
+      Mentions ${r.mentions ?? '—'} ·
+      Sentiment <span class="${sentClass(r.avg_sentiment)}">${(r.avg_sentiment ?? 0).toFixed(2)}</span>
+      (${r.trend || '—'}) ·
+      <a id="star" href="#" data-sym="${SYM}">${star}</a>
+      ${er}${inTop}
+    `;
+    $("#star").addEventListener("click", async (e) => {
+      e.preventDefault();
+      if (ws.has(SYM)) {
+        await fetch(`/api/watchlist/${encodeURIComponent(SYM)}`, {method: "DELETE"});
+      } else {
+        await fetch(`/api/watchlist`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({symbol: SYM})
+        });
+      }
+      load();
+    });
+  }
+
+  function renderCharts(history) {
+    const c = $("#charts");
+    if (!history.length) {
+      c.innerHTML = `<div class="empty muted">No history yet — wait for a few refreshes to populate.</div>`;
+      return;
+    }
+    c.innerHTML =
+      lineChart(history, v => v.mentions,      "#58a6ff", "Mentions") +
+      lineChart(history, v => v.avg_sentiment, "#3fb950", "Sentiment") +
+      (history.some(v => v.price != null)
+        ? lineChart(history.filter(v => v.price != null), v => v.price, "#d29922", "Price")
+        : "");
+  }
+
+  function renderNews(news) {
+    const ul = $("#news");
+    if (!news || !news.length) {
+      ul.innerHTML = `<li class="empty muted">No recent news.</li>`;
+      return;
+    }
+    ul.innerHTML = news.map(n => {
+      const age = n.age_hours != null ? `<span class="muted">${n.age_hours}h ago</span>` : "";
+      return `<li>
+        <a href="${n.url}" target="_blank" rel="noopener">${(n.title||"").replace(/</g,'&lt;')}</a>
+        <span class="muted">— ${n.publisher || ""}</span> ${age}
+      </li>`;
+    }).join("");
+  }
+
+  function renderMessages(msgs) {
+    const tb = $("#msgs tbody");
+    $("#msgs-empty").hidden = !!msgs.length;
+    tb.innerHTML = msgs.map(m => `
+      <tr>
+        <td class="muted">${fmtTs(m.ts)}</td>
+        <td>${m.source || ""}</td>
+        <td class="${sentClass(m.sentiment)}">${m.sentiment != null ? m.sentiment.toFixed(2) : ""}</td>
+        <td>${m.score || 0}</td>
+        <td>${m.url ? `<a href="${m.url}" target="_blank" rel="noopener">` : ""}
+            ${(m.text || "").replace(/</g,'&lt;').slice(0, 240)}
+            ${m.url ? "</a>" : ""}</td>
+      </tr>
+    `).join("");
+  }
+
+  async function load() {
+    const r = await fetch(`/api/ticker/${encodeURIComponent(SYM)}`);
+    const j = await r.json();
+    renderHead(j);
+    renderCharts(j.history || []);
+    renderNews(j.row?.news || []);
+    renderMessages(j.messages || []);
+  }
+  load();
+  </script>
+</body>
+</html>
