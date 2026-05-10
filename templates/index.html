@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Social Stock Sentiment</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <h1>Social Stock Sentiment</h1>
+    <div class="subtitle">
+      Top 20 most-mentioned tickers across Reddit, Stocktwits
+      <span id="twitter-status"></span>.
+    </div>
+    <div class="controls">
+      <button id="refresh">Refresh now</button>
+      <span id="status">Loading…</span>
+    </div>
+  </header>
+
+  <main>
+    <table id="board">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Ticker</th>
+          <th>Mentions</th>
+          <th>Bullish</th>
+          <th>Bearish</th>
+          <th>Neutral</th>
+          <th>Sentiment</th>
+          <th>Trend</th>
+          <th>Sources</th>
+          <th>Samples</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>No tickers yet — try refresh.</div>
+  </main>
+
+  <footer>
+    <small>
+      Sentiment is lexicon-based (Stocktwits uses poster-tagged Bullish/Bearish
+      where present). Cache TTL: 5 min. Not financial advice.
+    </small>
+  </footer>
+
+  <script>
+  const $ = (s) => document.querySelector(s);
+
+  function pct(stat) {
+    const total = stat.bullish + stat.bearish + stat.neutral;
+    return total === 0 ? 0 : Math.round(100 * stat.bullish / total);
+  }
+
+  function render(data) {
+    const tw = data.twitter_enabled
+      ? " and Twitter/X"
+      : " (Twitter/X disabled — set TWITTER_BEARER_TOKEN to enable)";
+    $("#twitter-status").textContent = tw;
+
+    const tbody = $("#board tbody");
+    tbody.innerHTML = "";
+    if (!data.tickers || data.tickers.length === 0) {
+      $("#empty").hidden = false;
+    } else {
+      $("#empty").hidden = true;
+    }
+
+    data.tickers.forEach((t, i) => {
+      const tr = document.createElement("tr");
+      tr.classList.add("trend-" + t.trend);
+      const bar = pct(t);
+      tr.innerHTML = `
+        <td>${i + 1}</td>
+        <td class="ticker">${t.symbol}</td>
+        <td>${t.mentions}</td>
+        <td class="bull">${t.bullish}</td>
+        <td class="bear">${t.bearish}</td>
+        <td class="neu">${t.neutral}</td>
+        <td>
+          <div class="bar"><div class="bar-fill" style="width:${bar}%"></div></div>
+          <span class="score">${t.avg_sentiment.toFixed(2)}</span>
+        </td>
+        <td class="trend ${t.trend}">${t.trend}</td>
+        <td class="sources">${Object.entries(t.sources)
+          .map(([k, v]) => `${k}:${v}`).join(", ")}</td>
+        <td>${(t.sample_urls || []).slice(0, 2).map((u, j) =>
+          `<a href="${u}" target="_blank" rel="noopener">[${j + 1}]</a>`
+        ).join(" ")}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    const ts = new Date(data.generated_at * 1000).toLocaleString();
+    $("#status").textContent =
+      `Updated ${ts} · sources: ${data.sources.join(", ")} · ${data.duration_sec}s`;
+  }
+
+  async function load(force) {
+    $("#status").textContent = force ? "Refreshing…" : "Loading…";
+    try {
+      const r = await fetch(force ? "/api/refresh" : "/api/trending",
+                            { method: force ? "POST" : "GET" });
+      const data = await r.json();
+      render(data);
+    } catch (e) {
+      $("#status").textContent = "Error: " + e.message;
+    }
+  }
+
+  $("#refresh").addEventListener("click", () => load(true));
+  load(false);
+  setInterval(() => load(false), 5 * 60 * 1000);
+  </script>
+</body>
+</html>

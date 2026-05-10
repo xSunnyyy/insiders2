@@ -1,0 +1,78 @@
+:root {
+  --bg: #0e1116;
+  --panel: #161b22;
+  --border: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --bull: #3fb950;
+  --bear: #f85149;
+  --neu:  #d29922;
+  --link: #58a6ff;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica,
+               Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  padding: 24px 32px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+header h1 { margin: 0 0 4px; font-size: 22px; }
+.subtitle { color: var(--muted); font-size: 13px; }
+.controls { margin-top: 12px; display: flex; align-items: center; gap: 12px; }
+button {
+  background: var(--link); color: white; border: 0; border-radius: 6px;
+  padding: 6px 14px; cursor: pointer; font-size: 13px;
+}
+button:hover { filter: brightness(1.1); }
+#status { color: var(--muted); font-size: 12px; }
+
+main { padding: 16px 32px 48px; }
+
+table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+  overflow: hidden;
+}
+th, td {
+  padding: 8px 12px; text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+th {
+  background: #1c2129; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;
+}
+tr:last-child td { border-bottom: 0; }
+tr:hover td { background: #1a1f27; }
+
+.ticker { font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bull { color: var(--bull); }
+.bear { color: var(--bear); }
+.neu  { color: var(--muted); }
+
+.trend { text-transform: uppercase; font-weight: 700; font-size: 11px; }
+.trend.bullish { color: var(--bull); }
+.trend.bearish { color: var(--bear); }
+.trend.neutral { color: var(--neu); }
+
+.bar {
+  display: inline-block; width: 90px; height: 8px;
+  background: rgba(248,81,73,0.35); border-radius: 4px; vertical-align: middle;
+  overflow: hidden;
+}
+.bar-fill { height: 100%; background: var(--bull); }
+.score { margin-left: 8px; font-family: ui-monospace, monospace; color: var(--muted); }
+
+.sources { color: var(--muted); font-size: 12px; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.empty { padding: 24px; text-align: center; color: var(--muted); }
+footer { padding: 16px 32px 32px; color: var(--muted); }
