@@ -7,14 +7,22 @@ top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
 
 | Platform     | Method                                                                           | Status |
 |--------------|----------------------------------------------------------------------------------|--------|
-| Reddit       | Public `.json` endpoints on `wallstreetbets`, `stocks`, `investing`, etc.        | works (no key) |
+| Reddit       | Public `.json` endpoints on `wallstreetbets`, `stocks`, `investing`, `StockMarket`, `options`, `pennystocks`, `Daytrading`, `Superstonk`, `stock_picks` | works (no key) |
 | Stocktwits   | Public `api.stocktwits.com/api/2` trending + per-symbol streams                  | works (no key) |
+| Bluesky      | Public AppView `app.bsky.feed.searchPosts` (no auth)                             | works (no key) |
 | Twitter / X  | v2 `recent search` endpoint (paid). Set `TWITTER_BEARER_TOKEN` to enable.        | opt-in |
 
 > Twitter no longer permits free anonymous scraping (`snscrape` and the
 > guest-token flows have been broken since 2023). Without a paid bearer token
 > the Twitter source silently returns nothing — Reddit + Stocktwits still
 > produce a useful ranking on their own.
+
+## Live quotes
+
+Stocktwits' free messaging API doesn't return prices, so the dashboard pulls
+**price + change %** for the top-20 tickers from Yahoo Finance's
+unauthenticated v8 chart endpoint (`prices.py`). Quotes are fetched in
+parallel and cached alongside the rest of the snapshot (5-min TTL).
 
 ## How sentiment is decided
 

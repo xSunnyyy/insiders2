@@ -20,6 +20,9 @@ DEFAULT_SUBS = (
     "StockMarket",
     "options",
     "pennystocks",
+    "Daytrading",
+    "Superstonk",
+    "stock_picks",
 )
 
 UA = "stock-sentiment-bot/0.1 (read-only public JSON)"

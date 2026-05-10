@@ -7,7 +7,8 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from scrapers import reddit, stocktwits, twitter
+from prices import fetch_quotes
+from scrapers import bluesky, reddit, stocktwits, twitter
 from sentiment import label, score
 from tickers import extract_tickers
 
@@ -112,6 +113,13 @@ def run(top_n: int = 20) -> dict:
     except Exception as e:
         LOG.exception("stocktwits scrape failed: %s", e)
 
+    try:
+        bs_items = bluesky.fetch_all()
+        sources_used.append(f"bluesky({len(bs_items)})")
+        _process(bs_items, stats)
+    except Exception as e:
+        LOG.exception("bluesky scrape failed: %s", e)
+
     if twitter.is_enabled():
         try:
             tw_items = twitter.fetch_all()
@@ -123,10 +131,24 @@ def run(top_n: int = 20) -> dict:
         sources_used.append("twitter(disabled)")
 
     ranked = sorted(stats.values(), key=lambda s: s.mentions, reverse=True)[:top_n]
+    rows = [s.to_dict() for s in ranked]
+
+    quotes = fetch_quotes([r["symbol"] for r in rows])
+    for r in rows:
+        q = quotes.get(r["symbol"])
+        if q:
+            r["price"] = q["price"]
+            r["change_pct"] = q["change_pct"]
+            r["currency"] = q["currency"]
+        else:
+            r["price"] = None
+            r["change_pct"] = None
+            r["currency"] = ""
+
     return {
         "generated_at": int(started),
         "duration_sec": round(time.time() - started, 2),
         "sources": sources_used,
         "twitter_enabled": twitter.is_enabled(),
-        "tickers": [s.to_dict() for s in ranked],
+        "tickers": rows,
     }

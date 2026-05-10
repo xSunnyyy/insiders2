@@ -53,6 +53,8 @@ tr:last-child td { border-bottom: 0; }
 tr:hover td { background: #1a1f27; }
 
 .ticker { font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.price, .chg { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.muted { color: var(--muted); }
 .bull { color: var(--bull); }
 .bear { color: var(--bear); }
 .neu  { color: var(--muted); }

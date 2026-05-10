@@ -10,7 +10,7 @@
   <header>
     <h1>Social Stock Sentiment</h1>
     <div class="subtitle">
-      Top 20 most-mentioned tickers across Reddit, Stocktwits
+      Top 20 most-mentioned tickers across Reddit, Stocktwits, Bluesky
       <span id="twitter-status"></span>.
     </div>
     <div class="controls">
@@ -25,6 +25,8 @@
         <tr>
           <th>#</th>
           <th>Ticker</th>
+          <th>Price</th>
+          <th>Change %</th>
           <th>Mentions</th>
           <th>Bullish</th>
           <th>Bearish</th>
@@ -32,7 +34,6 @@
           <th>Sentiment</th>
           <th>Trend</th>
           <th>Sources</th>
-          <th>Samples</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -73,9 +74,20 @@
       const tr = document.createElement("tr");
       tr.classList.add("trend-" + t.trend);
       const bar = pct(t);
+      const priceCell = (t.price == null)
+        ? `<span class="muted">—</span>`
+        : `${t.price.toFixed(2)}`;
+      let chgCell = `<span class="muted">—</span>`;
+      if (t.change_pct != null) {
+        const cls = t.change_pct > 0 ? "bull" : (t.change_pct < 0 ? "bear" : "neu");
+        const sign = t.change_pct > 0 ? "+" : "";
+        chgCell = `<span class="${cls}">${sign}${t.change_pct.toFixed(2)}%</span>`;
+      }
       tr.innerHTML = `
         <td>${i + 1}</td>
         <td class="ticker">${t.symbol}</td>
+        <td class="price">${priceCell}</td>
+        <td class="chg">${chgCell}</td>
         <td>${t.mentions}</td>
         <td class="bull">${t.bullish}</td>
         <td class="bear">${t.bearish}</td>
@@ -87,9 +99,6 @@
         <td class="trend ${t.trend}">${t.trend}</td>
         <td class="sources">${Object.entries(t.sources)
           .map(([k, v]) => `${k}:${v}`).join(", ")}</td>
-        <td>${(t.sample_urls || []).slice(0, 2).map((u, j) =>
-          `<a href="${u}" target="_blank" rel="noopener">[${j + 1}]</a>`
-        ).join(" ")}</td>
       `;
       tbody.appendChild(tr);
     });
