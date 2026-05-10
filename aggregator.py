@@ -101,10 +101,15 @@ def run(top_n: int = 20) -> dict:
     sources_used: list[str] = []
     try:
         reddit_items = reddit.fetch_all()
-        sources_used.append(f"reddit({len(reddit_items)})")
+        err = reddit.last_error()
+        label_str = f"reddit({len(reddit_items)})"
+        if reddit_items == [] and err:
+            label_str = f"reddit(0; {err})"
+        sources_used.append(label_str)
         _process(reddit_items, stats)
     except Exception as e:
         LOG.exception("reddit scrape failed: %s", e)
+        sources_used.append(f"reddit(error: {e})")
 
     try:
         st_items = stocktwits.fetch_all()
