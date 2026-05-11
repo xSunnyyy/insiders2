@@ -143,11 +143,13 @@
       `${rows.length} of ${ALL_ROWS.length} earnings shown`;
   }
 
-  async function load() {
+  async function load(force) {
     const days = $("#days").value;
-    $("#status").textContent = "Loading…";
+    $("#status").textContent = force ? "Refreshing…" : "Loading…";
     try {
-      const r = await fetch(`/api/earnings?days=${days}`);
+      const url = force ? `/api/earnings/refresh?days=${days}`
+                        : `/api/earnings?days=${days}`;
+      const r = await fetch(url, {method: force ? "POST" : "GET"});
       const j = await r.json();
       ALL_ROWS = j.items || [];
       const st = j.status || {};
@@ -161,18 +163,32 @@
         $("#empty").hidden = true;
       }
       renderRows();
-      $("#status").textContent =
-        `${ALL_ROWS.length} earnings (${st.source || "?"}, ${st.duration_sec || "?"}s)`;
+      const age = j.age_sec != null ? `, ${j.age_sec}s old` : "";
+      $("#status").innerHTML =
+        `${ALL_ROWS.length} earnings (${st.source || "?"}, ${st.duration_sec || "?"}s${age})`;
+
+      if (!force && j.stale) {
+        $("#status").innerHTML += ` <span class="refreshing">⟳ refreshing…</span>`;
+        try {
+          const r2 = await fetch(`/api/earnings/refresh?days=${days}`,
+                                 {method: "POST"});
+          const fresh = await r2.json();
+          ALL_ROWS = fresh.items || [];
+          renderRows();
+          $("#status").textContent =
+            `${ALL_ROWS.length} earnings (${(fresh.status||{}).source || "?"}, fresh)`;
+        } catch (e) {}
+      }
     } catch (e) {
       $("#status").textContent = "Error: " + e.message;
     }
   }
 
-  $("#refresh").addEventListener("click", load);
-  $("#days").addEventListener("change", load);
+  $("#refresh").addEventListener("click", () => load(true));
+  $("#days").addEventListener("change", () => load(false));
   $("#filter").addEventListener("input", renderRows);
   $("#mcap").addEventListener("change", renderRows);
-  load();
+  load(false);
   </script>
 </body>
 </html>

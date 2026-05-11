@@ -92,6 +92,46 @@ def _background_refresh(window: str) -> None:
             _in_flight[window] = False
 
 
+# Per-endpoint SWR state for earnings + insider (in addition to per-window
+# trending state above).
+_aux_state: dict[str, dict] = {
+    "earnings": {"in_flight": False, "last_force": 0.0},
+    "insider":  {"in_flight": False, "last_force": 0.0},
+}
+EARNINGS_TTL_SEC = 30 * 60      # earnings calendar churns slowly
+INSIDER_TTL_SEC  = 60 * 60      # openinsider's own cache is 1h
+
+
+def _earnings_age() -> float:
+    return time.time() - (earnings_mod._cache.get("fetched_at") or 0.0)
+
+
+def _insider_age() -> float:
+    return time.time() - (insider_mod._cache.get("fetched_at") or 0.0)
+
+
+def _bg_refresh_earnings(days: int) -> None:
+    state = _aux_state["earnings"]
+    try:
+        earnings_mod._do_refresh(days)
+    except Exception as e:
+        LOG.exception("background earnings refresh failed: %s", e)
+    finally:
+        state["in_flight"] = False
+
+
+def _bg_refresh_insider() -> None:
+    state = _aux_state["insider"]
+    try:
+        insider_mod._refresh()
+        if not insider_mod._cache.get("purchases"):
+            insider_mod._refresh_from_yahoo()
+    except Exception as e:
+        LOG.exception("background insider refresh failed: %s", e)
+    finally:
+        state["in_flight"] = False
+
+
 def _ensure_cache_warmed(window: str) -> None:
     """Populate in-memory cache from disk if available."""
     if window in _cache:
@@ -199,26 +239,93 @@ def refresh():
 
 @app.route("/api/earnings")
 def earnings_api():
+    """SWR read. Returns whatever the earnings module has cached; if stale
+    (or no cache at all), schedules a background refresh and tags
+    stale=True. The very first ever request blocks for one refresh."""
     days = int(request.args.get("days", "14"))
-    items = earnings_mod.upcoming(days=days)
+    state = _aux_state["earnings"]
+    has_cache = earnings_mod._cache.get("items") is not None
+    age = _earnings_age()
+    is_stale = age > EARNINGS_TTL_SEC
+
+    if not has_cache:
+        items = earnings_mod.upcoming(days=days)  # blocking
+        is_stale = False
+        age = 0
+    else:
+        items = earnings_mod.upcoming(days=days)  # cheap; reads from cache
+        if is_stale and not state["in_flight"]:
+            state["in_flight"] = True
+            _bg_pool.submit(_bg_refresh_earnings, days)
+
     return jsonify({
         "items": items,
         "status": earnings_mod.last_status(),
+        "stale": is_stale,
+        "age_sec": int(age),
+        "refreshing": state["in_flight"],
+    })
+
+
+@app.route("/api/earnings/refresh", methods=["POST"])
+def earnings_refresh():
+    """Force a blocking refresh."""
+    days = int(request.args.get("days", "14"))
+    earnings_mod._do_refresh(days)
+    return jsonify({
+        "items": earnings_mod.upcoming(days=days),
+        "status": earnings_mod.last_status(),
+        "stale": False, "age_sec": 0, "refreshing": False,
     })
 
 
 @app.route("/api/insider")
 def insider_api():
+    """SWR read for insider buying."""
     view = request.args.get("view", "purchases")
     limit = int(request.args.get("limit", "50"))
-    if view == "clusters":
-        items = insider_mod.cluster_buys(limit=limit)
+    state = _aux_state["insider"]
+    has_cache = insider_mod._cache.get("purchases") is not None
+    age = _insider_age()
+    is_stale = age > INSIDER_TTL_SEC
+
+    if not has_cache:
+        # Cold cache: block once to populate.
+        if view == "clusters":
+            items = insider_mod.cluster_buys(limit=limit)
+        else:
+            items = insider_mod.purchases(limit=limit)
+        is_stale = False
+        age = 0
     else:
-        items = insider_mod.purchases(limit=limit)
+        items = (insider_mod.cluster_buys(limit=limit)
+                 if view == "clusters"
+                 else insider_mod.purchases(limit=limit))
+        if is_stale and not state["in_flight"]:
+            state["in_flight"] = True
+            _bg_pool.submit(_bg_refresh_insider)
+
     return jsonify({
         "items": items,
         "error": insider_mod.last_error(),
+        "stale": is_stale,
+        "age_sec": int(age),
+        "refreshing": state["in_flight"],
     })
+
+
+@app.route("/api/insider/refresh", methods=["POST"])
+def insider_refresh():
+    """Force a blocking refresh."""
+    view = request.args.get("view", "purchases")
+    limit = int(request.args.get("limit", "50"))
+    insider_mod._refresh()
+    if not insider_mod._cache.get("purchases"):
+        insider_mod._refresh_from_yahoo()
+    items = (insider_mod.cluster_buys(limit=limit)
+             if view == "clusters" else insider_mod.purchases(limit=limit))
+    return jsonify({"items": items, "error": insider_mod.last_error(),
+                    "stale": False, "age_sec": 0, "refreshing": False})
 
 
 @app.route("/api/ticker/<symbol>")

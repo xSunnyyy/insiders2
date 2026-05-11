@@ -415,6 +415,16 @@ def run(top_n: int = 20, window: str = "now") -> dict:
     except Exception as e:
         LOG.warning("prune failed: %s", e)
 
+    # Aggregate price-source counts so the UI can show which path worked
+    # (yahoo-v7 / yahoo-v8 / stooq / none).
+    src_counts = {"yahoo-v7": 0, "yahoo-v8": 0, "stooq": 0, "none": 0}
+    for r in rows:
+        s = r.get("price_source") or ""
+        if r.get("price") is None:
+            src_counts["none"] += 1
+        elif s in src_counts:
+            src_counts[s] += 1
+
     # Sector rollup over the rows in view: mean weighted sentiment + count.
     sector_roll: dict[str, dict] = {}
     for r in rows:
@@ -443,6 +453,7 @@ def run(top_n: int = 20, window: str = "now") -> dict:
         "window": window,
         "duration_sec": round(time.time() - started, 2),
         "sources": sources_used,
+        "price_source_counts": src_counts,
         "twitter_enabled": twitter.is_enabled(),
         "alert_channels": alerts.channels_configured(),
         "watchlist": db.watchlist_get(),

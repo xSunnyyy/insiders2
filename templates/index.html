@@ -34,7 +34,9 @@
         <button class="win" data-win="7d">7d</button>
       </div>
       <button id="refresh">Refresh</button>
+      <button id="refresh-all" title="Force refresh top 20 + earnings + insider in parallel">Refresh all tabs</button>
       <span id="status">Loading…</span>
+      <span id="price-sources" class="muted"></span>
     </div>
   </header>
 
@@ -122,7 +124,13 @@
   }
   function priceCell(t) {
     if (t.price == null) return `<span class="muted">—</span>`;
-    return `${t.price.toFixed(2)}`;
+    const src = t.price_source || "";
+    const tag = src === "yahoo-v7" ? "Y7"
+              : src === "yahoo-v8" ? "Y8"
+              : src === "stooq"    ? "S"
+              : "";
+    const badge = tag ? `<span class="src-badge" title="${src}">${tag}</span>` : "";
+    return `${t.price.toFixed(2)}${badge}`;
   }
   function chgCell(v) {
     if (v == null) return `<span class="muted">—</span>`;
@@ -295,6 +303,17 @@
     const ts = new Date(data.generated_at * 1000).toLocaleString();
     $("#status").textContent =
       `Updated ${ts} · window: ${data.window} · sources: ${data.sources.join(", ")} · ${data.duration_sec}s`;
+
+    // Show which price source served the rows, so empty Price columns
+    // can be diagnosed at a glance.
+    const psc = data.price_source_counts || {};
+    const parts = [];
+    if (psc["yahoo-v7"]) parts.push(`Y7: ${psc["yahoo-v7"]}`);
+    if (psc["yahoo-v8"]) parts.push(`Y8: ${psc["yahoo-v8"]}`);
+    if (psc["stooq"])    parts.push(`stooq: ${psc["stooq"]}`);
+    if (psc["none"])     parts.push(`<span class="bear">no price: ${psc["none"]}</span>`);
+    $("#price-sources").innerHTML = parts.length
+      ? ` · prices [${parts.join(", ")}]` : "";
   }
 
   async function load(force) {
@@ -346,6 +365,31 @@
   });
 
   $("#refresh").addEventListener("click", () => load(true));
+
+  async function refreshAll() {
+    const btn = $("#refresh-all");
+    btn.disabled = true;
+    btn.textContent = "Refreshing all…";
+    $("#status").innerHTML = `<span class="refreshing">⟳ refreshing all tabs in parallel…</span>`;
+    try {
+      const [tr] = await Promise.all([
+        fetch(`/api/refresh?window=${CURRENT_WINDOW}`, {method: "POST"})
+          .then(r => r.json()),
+        fetch(`/api/earnings/refresh?days=14`, {method: "POST"})
+          .then(r => r.json()).catch(e => null),
+        fetch(`/api/insider/refresh?view=purchases&limit=100`, {method: "POST"})
+          .then(r => r.json()).catch(e => null),
+      ]);
+      render(tr);
+    } catch (e) {
+      $("#status").textContent = "Refresh-all error: " + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Refresh all tabs";
+    }
+  }
+  $("#refresh-all").addEventListener("click", refreshAll);
+
   load(false);
   setInterval(() => load(false), 5 * 60 * 1000);
   </script>
