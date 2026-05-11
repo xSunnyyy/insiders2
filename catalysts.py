@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 
 import requests
 
+import yahoo_auth
+
 LOG = logging.getLogger(__name__)
 
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -29,11 +31,11 @@ NEWS_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 def _earnings_for(symbol: str) -> dict | None:
     sym = symbol.replace(".", "-")
     try:
-        r = requests.get(
-            EARNINGS_URL.format(symbol=sym),
-            params={"modules": "calendarEvents"},
-            headers={"User-Agent": UA}, timeout=8,
-        )
+        session, crumb = yahoo_auth.get()
+        params = {"modules": "calendarEvents"}
+        if crumb:
+            params["crumb"] = crumb
+        r = session.get(EARNINGS_URL.format(symbol=sym), params=params, timeout=8)
         if r.status_code != 200:
             return None
         result = ((r.json() or {}).get("quoteSummary") or {}).get("result") or []

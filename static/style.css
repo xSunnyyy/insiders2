@@ -79,6 +79,104 @@ a:hover { text-decoration: underline; }
 .empty { padding: 24px; text-align: center; color: var(--muted); }
 footer { padding: 16px 32px 32px; color: var(--muted); }
 
+.topnav { margin-bottom: 12px; }
+.topnav a {
+  display: inline-block; margin-right: 6px; padding: 4px 12px;
+  border-radius: 6px; color: var(--muted); font-size: 13px;
+  text-decoration: none; border: 1px solid transparent;
+}
+.topnav a:hover  { background: #1c2129; color: var(--text); }
+.topnav a.active { background: #1c2129; color: var(--text);
+                   border-color: var(--border); }
+.badge {
+  display: inline-block; margin-left: 4px; padding: 0 6px;
+  background: var(--link); color: #fff; border-radius: 10px;
+  font-size: 11px; font-weight: 600;
+}
+
+#add-form { display: inline-flex; gap: 6px; }
+#add-input {
+  background: #0d1117; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 200px;
+  text-transform: uppercase;
+}
+button.danger { background: var(--bear); }
+.star.remove { color: var(--bear); font-weight: 700; }
+.star.remove:hover { filter: brightness(1.3); }
+
+#search-form { display: inline-flex; gap: 6px; }
+#search-input {
+  background: #0d1117; color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; width: 160px;
+  text-transform: uppercase;
+}
+
+.window-tabs { display: inline-flex; gap: 4px; }
+.window-tabs .win {
+  background: transparent; color: var(--muted); border: 1px solid var(--border);
+  padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;
+}
+.window-tabs .win:hover  { color: var(--text); }
+.window-tabs .win.active { background: var(--link); color: #fff; border-color: var(--link); }
+
+.prepost { font-family: ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
+.sector { font-size: 12px; }
+
+.consensus .dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 2px; vertical-align: middle;
+}
+.dot.bull { background: var(--bull); }
+.dot.bear { background: var(--bear); }
+.dot.neu  { background: var(--neu); }
+
+.risk-chip {
+  display: inline-block; padding: 1px 6px; margin: 1px;
+  background: rgba(248,81,73,0.18); color: var(--bear);
+  border-radius: 3px; font-size: 11px; font-weight: 600; white-space: nowrap;
+}
+
+.sector-chip {
+  display: inline-block; margin: 2px; padding: 4px 10px;
+  border-radius: 999px; background: #0d1117; border: 1px solid var(--border);
+  font-size: 12px;
+}
+.sector-chip.bull { border-color: rgba(63,185,80,0.5); }
+.sector-chip.bear { border-color: rgba(248,81,73,0.5); }
+.sector-chip .score { color: var(--muted); margin-left: 6px; }
+
+.alert-input {
+  background: #0d1117; color: var(--text); border: 1px solid var(--border);
+  border-radius: 4px; padding: 4px 6px; font-size: 12px; width: 70px;
+  font-family: ui-monospace, monospace;
+}
+#enable-notify.active {
+  background: var(--bull);
+}
+
+/* Mobile responsive */
+@media (max-width: 900px) {
+  header { padding: 16px; }
+  main   { padding: 12px; }
+  h1     { font-size: 18px; }
+  .controls { flex-wrap: wrap; gap: 6px; }
+  .controls > * { flex-shrink: 0; }
+  main > table { display: block; overflow-x: auto; white-space: nowrap; }
+  #search-input, #add-input { width: 140px; }
+}
+@media (max-width: 600px) {
+  /* Hide the noisiest columns on phones; users can drill into a row for detail. */
+  #board th:nth-child(7),  #board td:nth-child(7),   /* Pre/Post */
+  #board th:nth-child(9),  #board td:nth-child(9),   /* Δ1h */
+  #board th:nth-child(10), #board td:nth-child(10),  /* Δ24h */
+  #board th:nth-child(11), #board td:nth-child(11),  /* z */
+  #board th:nth-child(12), #board td:nth-child(12),  /* sparkline */
+  #board th:nth-child(14), #board td:nth-child(14),  /* ΔSent 24h */
+  #board th:nth-child(19), #board td:nth-child(19)   /* Sources */
+  { display: none; }
+  .topnav a { padding: 4px 8px; font-size: 12px; }
+}
+
 /* deltas + sparkline + catalysts */
 .delta, .z, .mentions { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .bold { font-weight: 700; }

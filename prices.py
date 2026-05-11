@@ -30,7 +30,7 @@ def _fetch_one(symbol: str) -> dict | None:
         yahoo_sym = symbol.replace(".", "-")
         r = requests.get(
             QUOTE_URL.format(symbol=yahoo_sym),
-            params={"interval": "1d", "range": "2d"},
+            params={"interval": "1d", "range": "2d", "includePrePost": "true"},
             headers={"User-Agent": UA},
             timeout=8,
         )
@@ -47,11 +47,24 @@ def _fetch_one(symbol: str) -> dict | None:
         if price is None or prev is None or prev == 0:
             return None
         change_pct = (price - prev) / prev * 100.0
+
+        # Extended-hours fields are present only when applicable (Yahoo
+        # only populates pre/post when sessions are active or recently
+        # closed). Leave as None when absent.
+        pre = meta.get("preMarketPrice")
+        pre_chg = meta.get("preMarketChangePercent")
+        post = meta.get("postMarketPrice")
+        post_chg = meta.get("postMarketChangePercent")
+
         return {
             "price": round(float(price), 2),
             "prev_close": round(float(prev), 2),
             "change_pct": round(float(change_pct), 2),
             "currency": meta.get("currency", ""),
+            "pre_price": round(float(pre), 2) if pre is not None else None,
+            "pre_change_pct": round(float(pre_chg), 2) if pre_chg is not None else None,
+            "post_price": round(float(post), 2) if post is not None else None,
+            "post_change_pct": round(float(post_chg), 2) if post_chg is not None else None,
         }
     except (requests.RequestException, ValueError, TypeError) as e:
         LOG.debug("yahoo fetch failed for %s: %s", symbol, e)

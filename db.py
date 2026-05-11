@@ -228,6 +228,54 @@ def sparkline(ticker: str, ts: int, hours: int = 24, points: int = 24) -> list[i
     return out
 
 
+def aggregate_window(start_ts: int, end_ts: int, top_n: int = 20) -> list[dict]:
+    """Rank tickers over a time window. Uses MAX mentions per ticker in the
+    window (to avoid over-counting the same posts across consecutive
+    snapshots) plus the latest sentiment/price within the window."""
+    with connect() as c:
+        if c is None:
+            return []
+        cur = c.execute(
+            """
+            SELECT ticker,
+                   MAX(mentions) AS peak_mentions,
+                   SUM(mentions) AS total_mentions,
+                   SUM(bullish)  AS bullish,
+                   SUM(bearish)  AS bearish,
+                   SUM(neutral)  AS neutral,
+                   AVG(avg_sentiment) AS avg_sentiment
+            FROM snapshots
+            WHERE ts BETWEEN ? AND ?
+            GROUP BY ticker
+            ORDER BY peak_mentions DESC
+            LIMIT ?
+            """,
+            (start_ts, end_ts, top_n),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        # Attach the latest price / change_pct for each row
+        for r in rows:
+            cur2 = c.execute(
+                "SELECT price, change_pct, sources_json FROM snapshots "
+                "WHERE ticker=? AND ts BETWEEN ? AND ? "
+                "ORDER BY ts DESC LIMIT 1",
+                (r["ticker"], start_ts, end_ts),
+            )
+            latest = cur2.fetchone()
+            if latest:
+                r["price"] = latest["price"]
+                r["change_pct"] = latest["change_pct"]
+                try:
+                    r["sources"] = json.loads(latest["sources_json"] or "{}")
+                except Exception:
+                    r["sources"] = {}
+            else:
+                r["price"] = None
+                r["change_pct"] = None
+                r["sources"] = {}
+        return rows
+
+
 def prune_snapshots(older_than_days: int = 30) -> int:
     cutoff = int(time.time()) - older_than_days * 86400
     with connect() as c:

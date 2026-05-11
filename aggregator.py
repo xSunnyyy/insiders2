@@ -20,10 +20,23 @@ from dataclasses import dataclass, field
 import alerts
 import catalysts
 import db
+import sectors
 from prices import fetch_quotes
 from scrapers import bluesky, reddit, stocktwits, twitter
 from sentiment import label, score
 from tickers import extract_tickers
+
+
+SOURCE_CATEGORIES = ("reddit", "stocktwits", "bluesky", "twitter")
+
+
+def _category(source: str) -> str:
+    """Normalize a granular source label (e.g. 'reddit/r/wsb') to a category."""
+    s = (source or "").lower()
+    for cat in SOURCE_CATEGORIES:
+        if s.startswith(cat):
+            return cat
+    return "other"
 
 LOG = logging.getLogger(__name__)
 
@@ -44,6 +57,10 @@ class TickerStats:
     weighted_sum: float = 0.0
     weight_total: float = 0.0
     sources: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    # Per-source rollups: bullish/bearish/total + weighted sentiment sum.
+    per_source: dict[str, dict] = field(default_factory=lambda: defaultdict(
+        lambda: {"mentions": 0, "bullish": 0, "bearish": 0,
+                 "neutral": 0, "wsum": 0.0, "wtot": 0.0}))
     samples: list[dict] = field(default_factory=list)  # for drill-down
 
     def add(self, sentiment: float, weight: float, source: str,
@@ -58,6 +75,19 @@ class TickerStats:
         else:
             self.neutral += 1
         self.sources[source] += 1
+
+        cat = _category(source)
+        ps = self.per_source[cat]
+        ps["mentions"] += 1
+        ps["wsum"] += sentiment * weight
+        ps["wtot"] += weight
+        if sentiment >= 0.15:
+            ps["bullish"] += 1
+        elif sentiment <= -0.15:
+            ps["bearish"] += 1
+        else:
+            ps["neutral"] += 1
+
         # Keep up to 10 highest-weighted samples for the drill-down view.
         if len(self.samples) < 10:
             self.samples.append({
@@ -75,7 +105,29 @@ class TickerStats:
     def trend(self) -> str:
         return label(self.avg_sentiment)
 
+    def per_source_trends(self) -> dict[str, str]:
+        """Return {category: 'bullish'|'bearish'|'neutral'} per active source."""
+        out: dict[str, str] = {}
+        for cat, ps in self.per_source.items():
+            if ps["mentions"] == 0:
+                continue
+            avg = ps["wsum"] / ps["wtot"] if ps["wtot"] else 0.0
+            out[cat] = label(avg)
+        return out
+
     def to_dict(self) -> dict:
+        ts = self.per_source_trends()
+        # Consensus = fraction of contributing sources whose trend matches the
+        # majority trend. 1.0 = all sources agree, 0.5 = split.
+        trends = list(ts.values())
+        consensus = 0.0
+        consensus_label = "none"
+        if trends:
+            from collections import Counter
+            c = Counter(trends)
+            top, top_n = c.most_common(1)[0]
+            consensus = round(top_n / len(trends), 2)
+            consensus_label = top
         return {
             "symbol": self.symbol,
             "mentions": self.mentions,
@@ -85,6 +137,10 @@ class TickerStats:
             "avg_sentiment": round(self.avg_sentiment, 3),
             "trend": self.trend,
             "sources": dict(self.sources),
+            "per_source_trends": ts,
+            "consensus": consensus,
+            "consensus_label": consensus_label,
+            "source_count": len(ts),
         }
 
 
@@ -205,23 +261,93 @@ def _persist(rows: list[dict], stats: dict[str, TickerStats], ts: int) -> None:
         db.write_messages(msgs, ts=ts)
 
 
-def run(top_n: int = 20) -> dict:
-    """Full pipeline. Returns the dashboard payload."""
+def _compute_risk_flags(row: dict) -> list[str]:
+    """Heuristic flags to surface obvious pump / coordinated patterns."""
+    flags: list[str] = []
+    mcap = row.get("market_cap")
+    if mcap is not None and mcap < 500_000_000 and row.get("mentions", 0) >= 10:
+        flags.append("small_cap")
+    if row.get("z_score") is not None and row["z_score"] >= 3 \
+            and not row.get("earnings_days_out") in range(-3, 8):
+        flags.append("uncaused_spike")
+    total = row.get("bullish", 0) + row.get("bearish", 0) + row.get("neutral", 0)
+    if total >= 20 and row.get("bullish", 0) / max(total, 1) >= 0.9:
+        flags.append("euphoria")
+    if row.get("source_count", 0) == 1 and row.get("mentions", 0) >= 20:
+        flags.append("single_source")
+    return flags
+
+
+def run(top_n: int = 20, window: str = "now") -> dict:
+    """Full pipeline. Returns the dashboard payload.
+
+    `window` controls the ranking:
+        'now'  current refresh only (default)
+        '1h'   peak mentions in trailing 1 hour
+        '4h'   trailing 4 hours
+        '24h'  trailing 24 hours
+        '7d'   trailing 7 days
+    Time windows other than 'now' rank against persisted snapshots and
+    will be empty until enough history has accumulated.
+    """
     started = time.time()
     ts = int(started)
 
     stats, sources_used = _scrape_all()
 
-    ranked = sorted(stats.values(), key=lambda s: s.mentions, reverse=True)[:top_n]
-    rows = [s.to_dict() for s in ranked]
+    # Always do a current-refresh ranking so the dashboard has something
+    # even on a fresh DB.
+    ranked_now = sorted(stats.values(), key=lambda s: s.mentions, reverse=True)
+    rows_now = [s.to_dict() for s in ranked_now[:top_n]]
 
-    # Quotes (Yahoo)
+    if window == "now":
+        rows = rows_now
+    else:
+        win_sec = {"1h": 3600, "4h": 4*3600, "24h": 24*3600, "7d": 7*86400}.get(window, 3600)
+        hist_rows = db.aggregate_window(ts - win_sec, ts, top_n=top_n)
+        # Map db.aggregate_window output -> dashboard schema
+        by_now = {r["symbol"]: r for r in rows_now}
+        rows = []
+        for h in hist_rows:
+            sym = h["ticker"]
+            base = by_now.get(sym, {})
+            rows.append({
+                "symbol": sym,
+                "mentions": int(h["peak_mentions"] or 0),
+                "bullish": int(h["bullish"] or 0),
+                "bearish": int(h["bearish"] or 0),
+                "neutral": int(h["neutral"] or 0),
+                "avg_sentiment": round(float(h["avg_sentiment"] or 0.0), 3),
+                "trend": label(float(h["avg_sentiment"] or 0.0)),
+                "sources": h.get("sources") or base.get("sources") or {},
+                "per_source_trends": base.get("per_source_trends", {}),
+                "consensus": base.get("consensus", 0.0),
+                "consensus_label": base.get("consensus_label", "none"),
+                "source_count": base.get("source_count", 0),
+            })
+        # Fall back to current if history is empty (e.g. fresh deploy)
+        if not rows:
+            rows = rows_now
+
+    # Quotes (Yahoo) -- includes pre/post-market when applicable.
     quotes = fetch_quotes([r["symbol"] for r in rows])
     for r in rows:
-        q = quotes.get(r["symbol"])
-        r["price"] = q["price"] if q else None
-        r["change_pct"] = q["change_pct"] if q else None
-        r["currency"] = q["currency"] if q else ""
+        q = quotes.get(r["symbol"]) or {}
+        r["price"] = q.get("price")
+        r["change_pct"] = q.get("change_pct")
+        r["currency"] = q.get("currency", "")
+        r["pre_price"] = q.get("pre_price")
+        r["pre_change_pct"] = q.get("pre_change_pct")
+        r["post_price"] = q.get("post_price")
+        r["post_change_pct"] = q.get("post_change_pct")
+
+    # Sector + market cap (cached; cheap)
+    secs = sectors.fetch([r["symbol"] for r in rows])
+    for r in rows:
+        s = secs.get(r["symbol"]) or {}
+        r["sector"] = s.get("sector") or ""
+        r["industry"] = s.get("industry") or ""
+        r["market_cap"] = s.get("market_cap")
 
     # Catalysts (earnings + news)
     cat = catalysts.fetch([r["symbol"] for r in rows])
@@ -234,6 +360,10 @@ def run(top_n: int = 20) -> dict:
 
     # Deltas + sparkline (uses prior snapshots)
     _enrich_with_history(rows, ts)
+
+    # Risk flags depend on prior enrichment (z_score, market_cap, earnings)
+    for r in rows:
+        r["risk_flags"] = _compute_risk_flags(r)
 
     # Persist this snapshot before evaluating alerts so the snapshot
     # itself becomes part of history for the *next* run.
@@ -256,12 +386,37 @@ def run(top_n: int = 20) -> dict:
     except Exception as e:
         LOG.warning("prune failed: %s", e)
 
+    # Sector rollup over the rows in view: mean weighted sentiment + count.
+    sector_roll: dict[str, dict] = {}
+    for r in rows:
+        sec = (r.get("sector") or "").strip()
+        if not sec:
+            continue
+        agg = sector_roll.setdefault(sec, {"count": 0, "wsum": 0.0, "wtot": 0.0,
+                                            "tickers": []})
+        agg["count"] += 1
+        agg["wsum"] += r["avg_sentiment"] * max(r["mentions"], 1)
+        agg["wtot"] += max(r["mentions"], 1)
+        agg["tickers"].append(r["symbol"])
+    sector_summary = []
+    for sec, a in sector_roll.items():
+        avg = a["wsum"] / a["wtot"] if a["wtot"] else 0.0
+        sector_summary.append({
+            "sector": sec, "count": a["count"],
+            "avg_sentiment": round(avg, 3),
+            "trend": label(avg),
+            "tickers": a["tickers"],
+        })
+    sector_summary.sort(key=lambda x: (-x["count"], -x["avg_sentiment"]))
+
     return {
         "generated_at": ts,
+        "window": window,
         "duration_sec": round(time.time() - started, 2),
         "sources": sources_used,
         "twitter_enabled": twitter.is_enabled(),
         "alert_channels": alerts.channels_configured(),
         "watchlist": db.watchlist_get(),
         "tickers": rows,
+        "sector_summary": sector_summary,
     }
