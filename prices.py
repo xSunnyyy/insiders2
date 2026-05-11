@@ -1,12 +1,13 @@
 """Live quote fetcher.
 
-Three tiers tried in order:
+Four tiers tried in order:
   1. Yahoo v7/finance/quote (batched) -- one call for all symbols, uses
      the crumb session. Has pre/post-market fields inline.
   2. Yahoo v8/finance/chart (per-symbol) -- a different endpoint that
      sometimes succeeds when v7 doesn't.
-  3. Stooq CSV (per-symbol, no auth) -- last-ditch fallback for hosts
-     where Yahoo is blocked entirely.
+  3. Stooq CSV (per-symbol, no auth) -- last-ditch keyless fallback.
+  4. Finnhub (per-symbol, requires FINNHUB_API_KEY) -- the only one that
+     reliably works from cloud / Vercel IPs. Free tier 60 calls/min.
 
 Each returned dict carries `source` so the dashboard can show which path
 served the row, making debugging on Vercel/Cloud hosts trivial.
@@ -17,6 +18,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -161,6 +163,51 @@ def _stooq(symbol: str) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Finnhub (keyed; works from Vercel/AWS IPs that block Yahoo and Stooq)
+# ---------------------------------------------------------------------------
+
+FINNHUB_URL = "https://finnhub.io/api/v1/quote"
+
+
+def finnhub_enabled() -> bool:
+    return bool(os.environ.get("FINNHUB_API_KEY"))
+
+
+def _finnhub(symbol: str) -> dict | None:
+    key = os.environ.get("FINNHUB_API_KEY")
+    if not key:
+        return None
+    # Finnhub uses '.' for class shares (BRK.B), same as us.
+    try:
+        r = requests.get(
+            FINNHUB_URL,
+            params={"symbol": symbol, "token": key},
+            headers={"User-Agent": UA}, timeout=8,
+        )
+        if r.status_code != 200:
+            LOG.debug("finnhub %s -> %s", symbol, r.status_code)
+            return None
+        d = r.json() or {}
+        price = d.get("c")
+        prev = d.get("pc")
+        if not price:  # 0 or None = unknown symbol
+            return None
+        return {
+            "price": round(float(price), 2),
+            "prev_close": round(float(prev), 2) if prev else None,
+            "change_pct": round(float(d.get("dp") or 0.0), 2),
+            "currency": "USD",
+            # Finnhub free tier doesn't return pre/post-market.
+            "pre_price": None, "pre_change_pct": None,
+            "post_price": None, "post_change_pct": None,
+            "source": "finnhub",
+        }
+    except (requests.RequestException, ValueError, TypeError) as e:
+        LOG.debug("finnhub fetch failed for %s: %s", symbol, e)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -201,9 +248,22 @@ def fetch_quotes(symbols: list[str], max_workers: int = 12) -> dict[str, dict]:
                 if q:
                     out[sym] = q
 
+    # Tier 4: Finnhub (only if API key configured). Works from cloud IPs.
+    missing = [s for s in eligible if s not in out]
+    if missing and finnhub_enabled():
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_finnhub, s): s for s in missing}
+            for fut in as_completed(futures):
+                sym = futures[fut]
+                q = fut.result()
+                if q:
+                    out[sym] = q
+
     n_v7 = sum(1 for v in out.values() if v.get("source") == "yahoo-v7")
     n_v8 = sum(1 for v in out.values() if v.get("source") == "yahoo-v8")
     n_st = sum(1 for v in out.values() if v.get("source") == "stooq")
-    LOG.info("prices: %d/%d in %.2fs (v7=%d, v8=%d, stooq=%d)",
-             len(out), len(eligible), time.time() - started, n_v7, n_v8, n_st)
+    n_fh = sum(1 for v in out.values() if v.get("source") == "finnhub")
+    LOG.info("prices: %d/%d in %.2fs (v7=%d, v8=%d, stooq=%d, finnhub=%d)",
+             len(out), len(eligible), time.time() - started,
+             n_v7, n_v8, n_st, n_fh)
     return out
