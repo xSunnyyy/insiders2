@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, jsonify, render_template, request
 
 import aggregator
@@ -23,26 +26,129 @@ LOG = logging.getLogger("app")
 app = Flask(__name__)
 
 CACHE_TTL_SEC = 5 * 60
+SNAPSHOT_DIR = "/tmp"
+SNAPSHOT_FILE = os.path.join(SNAPSHOT_DIR, "snapshot_{window}.json")
+
 # Per-window cache so the time-window selector doesn't trigger a fresh
 # scrape every click.
 _cache: dict[str, dict] = {}
 _lock = threading.Lock()
+# Background-refresh tracking: prevents duplicate concurrent refreshes for
+# the same window. SWR semantics: a stale request returns immediately with
+# the cached payload AND schedules a refresh; subsequent stale requests
+# during that refresh just see the in-flight flag and don't queue another.
+_in_flight: dict[str, bool] = {}
+_bg_pool = ThreadPoolExecutor(max_workers=2)
+
+
+def _snapshot_path(window: str) -> str:
+    safe = "".join(c for c in window if c.isalnum()) or "now"
+    return SNAPSHOT_FILE.format(window=safe)
+
+
+def _save_snapshot(window: str, data: dict, fetched_at: float) -> None:
+    """Persist the snapshot so cold starts can serve immediately."""
+    try:
+        path = _snapshot_path(window)
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"data": data, "fetched_at": fetched_at}, f)
+        os.replace(tmp, path)
+    except OSError as e:
+        LOG.warning("snapshot save failed: %s", e)
+
+
+def _load_snapshot(window: str) -> dict | None:
+    try:
+        path = _snapshot_path(window)
+        if not os.path.exists(path):
+            return None
+        with open(path) as f:
+            blob = json.load(f)
+        return blob
+    except (OSError, ValueError) as e:
+        LOG.warning("snapshot load failed: %s", e)
+        return None
 
 
 def _refresh_locked(window: str) -> dict:
+    """Blocking refresh. Updates in-memory cache + disk snapshot."""
     LOG.info("refreshing aggregated data (window=%s)", window)
     data = aggregator.run(top_n=20, window=window)
-    _cache[window] = {"data": data, "fetched_at": time.time()}
+    fetched_at = time.time()
+    with _lock:
+        _cache[window] = {"data": data, "fetched_at": fetched_at}
+    _save_snapshot(window, data, fetched_at)
     return data
 
 
-def get_data(force: bool = False, window: str = "now") -> dict:
+def _background_refresh(window: str) -> None:
+    try:
+        _refresh_locked(window)
+    except Exception as e:
+        LOG.exception("background refresh failed: %s", e)
+    finally:
+        with _lock:
+            _in_flight[window] = False
+
+
+def _ensure_cache_warmed(window: str) -> None:
+    """Populate in-memory cache from disk if available."""
+    if window in _cache:
+        return
+    blob = _load_snapshot(window)
+    if blob and isinstance(blob.get("data"), dict):
+        _cache[window] = {"data": blob["data"],
+                          "fetched_at": float(blob.get("fetched_at") or 0)}
+        LOG.info("warmed cache from disk for window=%s (age=%ds)",
+                 window, int(time.time() - _cache[window]["fetched_at"]))
+
+
+def get_data(force: bool = False, window: str = "now",
+             allow_stale: bool = True) -> dict:
+    """Return cached data with `stale` flag.
+
+    With `allow_stale=True` (default), stale data is returned immediately
+    and a background refresh is scheduled. This is the SWR path used by
+    /api/trending so dashboards render instantly.
+
+    With `force=True` or `allow_stale=False`, we block on a fresh scrape.
+    That's the path /api/refresh and JS-triggered foreground refreshes
+    take.
+    """
+    _ensure_cache_warmed(window)
     with _lock:
         entry = _cache.get(window)
-        if force or entry is None or \
-                (time.time() - entry["fetched_at"]) > CACHE_TTL_SEC:
-            return _refresh_locked(window)
-        return entry["data"]
+        age = (time.time() - entry["fetched_at"]) if entry else float("inf")
+        is_stale = age > CACHE_TTL_SEC
+
+        if force or entry is None:
+            # No cache at all -> blocking refresh (only path that does).
+            pass
+        elif allow_stale and is_stale:
+            # Serve stale, schedule background refresh if none in flight.
+            if not _in_flight.get(window):
+                _in_flight[window] = True
+                _bg_pool.submit(_background_refresh, window)
+            data = dict(entry["data"])
+            data["stale"] = True
+            data["age_sec"] = int(age)
+            data["refreshing"] = True
+            return data
+        elif not is_stale:
+            data = dict(entry["data"])
+            data["stale"] = False
+            data["age_sec"] = int(age)
+            data["refreshing"] = bool(_in_flight.get(window))
+            return data
+
+    # Fall through: blocking refresh path
+    data = _refresh_locked(window)
+    data = dict(data)
+    data["stale"] = False
+    data["age_sec"] = 0
+    data["refreshing"] = False
+    return data
 
 
 @app.route("/")
@@ -72,18 +178,23 @@ def insider_page():
 
 @app.route("/api/trending")
 def trending():
+    """Fast read: serves cache (stale if necessary) and schedules a
+    background refresh when stale. Only blocks on the very first
+    request when there's no cache yet."""
     window = request.args.get("window", "now")
     if window not in ("now", "1h", "4h", "24h", "7d"):
         window = "now"
-    return jsonify(get_data(window=window))
+    return jsonify(get_data(window=window, allow_stale=True))
 
 
 @app.route("/api/refresh", methods=["POST"])
 def refresh():
+    """Force a synchronous fresh scrape. Used by the JS background
+    refresh when /api/trending reported stale=true."""
     window = request.args.get("window", "now")
     if window not in ("now", "1h", "4h", "24h", "7d"):
         window = "now"
-    return jsonify(get_data(force=True, window=window))
+    return jsonify(get_data(force=True, window=window, allow_stale=False))
 
 
 @app.route("/api/earnings")

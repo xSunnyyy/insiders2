@@ -305,6 +305,22 @@
       const r = await fetch(path, { method: force ? "POST" : "GET" });
       const data = await r.json();
       render(data);
+
+      // Stale-while-revalidate: if /api/trending served stale data,
+      // kick a foreground /api/refresh that updates the cache and
+      // re-renders when fresh data lands.
+      if (!force && data.stale) {
+        $("#status").innerHTML += ` <span class="refreshing">⟳ refreshing in background…</span>`;
+        try {
+          const r2 = await fetch(`/api/refresh?window=${CURRENT_WINDOW}`,
+                                 {method: "POST"});
+          const fresh = await r2.json();
+          render(fresh);
+        } catch (e) {
+          // Stale data is still on screen; just log.
+          console.warn("background refresh failed:", e);
+        }
+      }
     } catch (e) {
       $("#status").textContent = "Error: " + e.message;
     }

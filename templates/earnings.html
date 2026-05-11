@@ -16,8 +16,8 @@
     </nav>
     <h1>Earnings calendar</h1>
     <div class="subtitle">
-      Upcoming earnings dates for ~200 widely-traded US tickers, sorted by
-      days out. Source: Yahoo Finance. Cached 6h.
+      All upcoming earnings, sorted by date. Source: NASDAQ
+      (with Yahoo fallback). Cached 6h.
     </div>
     <div class="controls">
       <label>Window:
@@ -25,6 +25,18 @@
           <option value="7">7 days</option>
           <option value="14" selected>14 days</option>
           <option value="30">30 days</option>
+        </select>
+      </label>
+      <label>Filter:
+        <input id="filter" type="text" placeholder="ticker / name…" />
+      </label>
+      <label>Min mcap:
+        <select id="mcap">
+          <option value="0" selected>any</option>
+          <option value="500000000">$500M+</option>
+          <option value="2000000000">$2B+</option>
+          <option value="10000000000">$10B+</option>
+          <option value="100000000000">$100B+</option>
         </select>
       </label>
       <button id="refresh">Refresh</button>
@@ -35,21 +47,101 @@
     <table id="board">
       <thead>
         <tr>
+          <th>Date</th>
+          <th>When</th>
           <th>Ticker</th>
-          <th>Earnings date</th>
-          <th>Days out</th>
+          <th>Company</th>
+          <th>Market cap</th>
+          <th>EPS est.</th>
+          <th>Last year</th>
+          <th># ests</th>
+          <th>Qtr</th>
         </tr>
       </thead>
       <tbody></tbody>
     </table>
-    <div id="empty" class="empty" hidden>No earnings in window.</div>
+    <div id="empty" class="empty" hidden></div>
   </main>
   <footer>
-    <small>Click a ticker for its drill-down. Not financial advice.</small>
+    <small>
+      Click a ticker for its drill-down. Earnings "When" comes from NASDAQ:
+      <code>pre-market</code> / <code>after-hours</code> / <code>not-supplied</code>.
+      Not financial advice.
+    </small>
   </footer>
 
   <script>
   const $ = (s) => document.querySelector(s);
+  let ALL_ROWS = [];
+
+  function whenChip(t) {
+    if (!t) return `<span class="muted">—</span>`;
+    const s = t.replace(/^time-/, "");
+    const cls = s.includes("pre") ? "bull"
+              : s.includes("after") ? "neu"
+              : "muted";
+    return `<span class="catalyst ${cls === 'bull' ? 'er' : ''}">${s}</span>`;
+  }
+
+  function parseMcap(s) {
+    // NASDAQ returns strings like "$2,856,484,896,000" or "N/A"
+    if (!s) return 0;
+    const n = Number(String(s).replace(/[^\d.]/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  }
+  function fmtMcap(s) {
+    const n = parseMcap(s);
+    if (!n) return `<span class="muted">—</span>`;
+    if (n >= 1e12) return `$${(n/1e12).toFixed(2)}T`;
+    if (n >= 1e9)  return `$${(n/1e9).toFixed(2)}B`;
+    if (n >= 1e6)  return `$${(n/1e6).toFixed(0)}M`;
+    return `$${n.toLocaleString()}`;
+  }
+
+  function epsCell(v) {
+    if (!v) return `<span class="muted">—</span>`;
+    const s = String(v).trim();
+    // Parens = negative (NASDAQ's convention)
+    const isNeg = s.startsWith("(");
+    return `<span class="${isNeg ? 'bear' : ''}">${s}</span>`;
+  }
+
+  function renderRows() {
+    const q = ($("#filter").value || "").toLowerCase().trim();
+    const minMcap = Number($("#mcap").value || 0);
+    const rows = ALL_ROWS.filter(r => {
+      if (minMcap && parseMcap(r.market_cap) < minMcap) return false;
+      if (q && !(r.symbol.toLowerCase().includes(q)
+              || (r.name || "").toLowerCase().includes(q))) return false;
+      return true;
+    });
+    const tbody = $("#board tbody");
+    tbody.innerHTML = "";
+    $("#empty").hidden = rows.length > 0;
+    if (!rows.length) {
+      $("#empty").textContent =
+        ALL_ROWS.length ? "No matches for your filter."
+                        : "No earnings loaded yet.";
+      return;
+    }
+    rows.forEach(it => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="muted">${it.earnings_date}</td>
+        <td>${whenChip(it.time)}</td>
+        <td class="ticker"><a href="/ticker/${it.symbol}">${it.symbol}</a></td>
+        <td>${(it.name || "").slice(0, 36)}</td>
+        <td class="mentions">${fmtMcap(it.market_cap)}</td>
+        <td class="price">${epsCell(it.eps_forecast)}</td>
+        <td class="price muted">${epsCell(it.last_year_eps)}</td>
+        <td class="muted">${it.no_of_ests || "—"}</td>
+        <td class="muted">${it.fiscal_quarter || "—"}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    $("#status").textContent =
+      `${rows.length} of ${ALL_ROWS.length} earnings shown`;
+  }
 
   async function load() {
     const days = $("#days").value;
@@ -57,35 +149,20 @@
     try {
       const r = await fetch(`/api/earnings?days=${days}`);
       const j = await r.json();
-      const tbody = $("#board tbody");
-      tbody.innerHTML = "";
-      const items = j.items || [];
+      ALL_ROWS = j.items || [];
       const st = j.status || {};
-      $("#empty").hidden = items.length > 0;
-      if (!items.length) {
-        $("#empty").innerHTML = (st.fetched && st.with_dates === 0)
-          ? `Scanned <b>${st.fetched}</b>/${st.universe_size} tickers
-             in ${st.duration_sec}s. <b>0</b> returned an upcoming earnings
-             date -- Yahoo's calendarEvents endpoint likely refused the crumb
-             from this host. Try refreshing in a minute.`
-          : (st.fetched
-              ? `Scanned ${st.fetched} tickers, ${st.with_dates} had ER
-                 dates, none within window. Widen to 30 days.`
-              : `No earnings data fetched yet -- try refreshing.`);
+      if (!ALL_ROWS.length) {
+        $("#empty").hidden = false;
+        $("#empty").innerHTML = st.source
+          ? `Source <code>${st.source}</code> returned 0 rows in
+             ${st.duration_sec || 0}s. Errors: ${(st.errors||[]).join(", ") || "none"}.`
+          : `No earnings data loaded.`;
+      } else {
+        $("#empty").hidden = true;
       }
-      items.forEach(it => {
-        const tr = document.createElement("tr");
-        const tag = it.earnings_days_out === 0 ? "ER today"
-                  : (it.earnings_days_out === 1 ? "tomorrow"
-                  : `${it.earnings_days_out} d`);
-        tr.innerHTML = `
-          <td class="ticker"><a href="/ticker/${it.symbol}">${it.symbol}</a></td>
-          <td>${it.earnings_date || ""}</td>
-          <td><span class="catalyst er">${tag}</span></td>
-        `;
-        tbody.appendChild(tr);
-      });
-      $("#status").textContent = `${items.length} tickers in window`;
+      renderRows();
+      $("#status").textContent =
+        `${ALL_ROWS.length} earnings (${st.source || "?"}, ${st.duration_sec || "?"}s)`;
     } catch (e) {
       $("#status").textContent = "Error: " + e.message;
     }
@@ -93,6 +170,8 @@
 
   $("#refresh").addEventListener("click", load);
   $("#days").addEventListener("change", load);
+  $("#filter").addEventListener("input", renderRows);
+  $("#mcap").addEventListener("change", renderRows);
   load();
   </script>
 </body>
