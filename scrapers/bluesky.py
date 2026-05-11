@@ -76,16 +76,22 @@ def search_posts(query: str, limit: int = 100) -> list[dict]:
 
 
 def fetch_all(per_query: int = 50) -> list[dict]:
+    """Run each search query in parallel and dedupe by post URL."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     items: list[dict] = []
     seen_urls: set[str] = set()
-    for q in QUERIES:
-        for it in search_posts(q, limit=per_query):
-            u = it.get("url") or it.get("body", "")[:80]
-            if u in seen_urls:
-                continue
-            seen_urls.add(u)
-            items.append(it)
-        time.sleep(0.3)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(search_posts, q, per_query): q for q in QUERIES}
+        for fut in as_completed(futures):
+            try:
+                for it in fut.result() or []:
+                    u = it.get("url") or it.get("body", "")[:80]
+                    if u in seen_urls:
+                        continue
+                    seen_urls.add(u)
+                    items.append(it)
+            except Exception as e:
+                LOG.warning("bluesky %s: %s", futures[fut], e)
     LOG.info("bluesky: collected %d unique posts across %d queries",
              len(items), len(QUERIES))
     return items

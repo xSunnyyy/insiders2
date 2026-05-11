@@ -76,13 +76,19 @@ def fetch_symbol_stream(symbol: str) -> list[dict]:
 
 
 def fetch_all(max_symbols: int = 25) -> list[dict]:
-    """Fetch messages for the top trending symbols on Stocktwits."""
+    """Fetch messages for the top trending symbols on Stocktwits, in
+    parallel for speed."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     syms = trending_symbols(limit=max_symbols)
     LOG.info("stocktwits: trending = %s", syms)
     items: list[dict] = []
-    for s in syms:
-        items.extend(fetch_symbol_stream(s))
-        time.sleep(0.4)
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_symbol_stream, s): s for s in syms}
+        for fut in as_completed(futures):
+            try:
+                items.extend(fut.result() or [])
+            except Exception as e:
+                LOG.warning("stocktwits %s: %s", futures[fut], e)
     LOG.info("stocktwits: collected %d messages across %d symbols",
              len(items), len(syms))
     return items
