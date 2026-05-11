@@ -3,8 +3,12 @@
 Approach (free + no signup):
   - Maintain a list of widely-traded US tickers
   - On demand, parallel-fetch earnings dates via catalysts._earnings_for
-  - Cache for 6h in memory; on Vercel a cold start rebuilds the cache,
-    but warm functions reuse it.
+    (Yahoo quoteSummary with crumb)
+  - Cache for 6h in memory, but only if we got results -- empty results
+    retry sooner so a one-off failure doesn't pin us to [] for hours.
+
+Diagnostics are surfaced via `last_status()` so the dashboard can
+explain why a result was empty.
 """
 
 from __future__ import annotations
@@ -23,29 +27,60 @@ LOG = logging.getLogger(__name__)
 UNIVERSE = sorted(KNOWN_TICKERS)[:200]
 CACHE_TTL_SEC = 6 * 3600
 _cache: dict = {"items": None, "fetched_at": 0.0}
+_status: dict = {"fetched": 0, "with_dates": 0, "errors": 0, "duration_sec": 0.0}
+
+
+def last_status() -> dict:
+    return dict(_status)
 
 
 def _fetch_one(symbol: str) -> dict | None:
-    e = catalysts._earnings_for(symbol)
-    if not e:
+    try:
+        e = catalysts._earnings_for(symbol)
+        if not e:
+            return None
+        return {"symbol": symbol, **e}
+    except Exception as exc:
+        LOG.debug("earnings fetch failed for %s: %s", symbol, exc)
         return None
-    return {"symbol": symbol, **e}
 
 
 def refresh(workers: int = 12) -> list[dict]:
     started = time.time()
+    fetched = with_dates = errors = 0
     out: list[dict] = []
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = {ex.submit(_fetch_one, s): s for s in UNIVERSE}
         for fut in as_completed(futures):
-            r = fut.result()
+            fetched += 1
+            try:
+                r = fut.result()
+            except Exception:
+                errors += 1
+                continue
             if r:
+                with_dates += 1
                 out.append(r)
     out.sort(key=lambda r: r.get("earnings_days_out", 9999))
+
+    _status.update({
+        "fetched": fetched,
+        "with_dates": with_dates,
+        "errors": errors,
+        "duration_sec": round(time.time() - started, 2),
+        "universe_size": len(UNIVERSE),
+    })
+
     _cache["items"] = out
-    _cache["fetched_at"] = time.time()
-    LOG.info("earnings: %d/%d in %.2fs", len(out), len(UNIVERSE),
-             time.time() - started)
+    # Only honor the full TTL if we actually got something. Empty
+    # results retry in ~5 minutes so a transient failure doesn't pin us.
+    if out:
+        _cache["fetched_at"] = time.time()
+    else:
+        _cache["fetched_at"] = time.time() - (CACHE_TTL_SEC - 300)
+
+    LOG.info("earnings: %d/%d with dates in %.2fs",
+             with_dates, fetched, _status["duration_sec"])
     return out
 
 
