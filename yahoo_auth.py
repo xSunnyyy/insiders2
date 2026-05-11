@@ -30,10 +30,22 @@ _fetched_at: float = 0.0
 TTL_SEC = 60 * 60   # refresh hourly
 
 
-def _refresh() -> None:
-    global _session, _crumb, _fetched_at
+def _build_session() -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": UA})
+    # We share this session across ~24 parallel threads (quotes + sectors +
+    # catalysts each launch their own pools); the default pool size of 10
+    # triggers "Connection pool is full" warnings. Bump it.
+    from requests.adapters import HTTPAdapter
+    adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
+    return s
+
+
+def _refresh() -> None:
+    global _session, _crumb, _fetched_at
+    s = _build_session()
     try:
         s.get("https://fc.yahoo.com", timeout=8, allow_redirects=True)
         r = s.get("https://query1.finance.yahoo.com/v1/test/getcrumb",
@@ -59,6 +71,5 @@ def get() -> tuple[requests.Session, str | None]:
         if _session is None or (time.time() - _fetched_at) > TTL_SEC:
             _refresh()
         if _session is None:
-            _session = requests.Session()
-            _session.headers.update({"User-Agent": UA})
+            _session = _build_session()
         return _session, _crumb

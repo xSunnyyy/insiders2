@@ -15,6 +15,7 @@ import logging
 import os
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import alerts
@@ -158,6 +159,10 @@ def _process(items: list[dict], stats: dict[str, TickerStats]) -> None:
         explicit = _explicit_to_score(it.get("explicit_sentiment"))
         sent = explicit if explicit is not None else score(text)
         syms = set(it.get("symbols") or []) or extract_tickers(text)
+        # Stocktwits emits crypto pairs as e.g. "BTC.X" / "ETH.X". They're
+        # not equities and won't resolve to prices; drop them so they
+        # don't crowd the equity rankings.
+        syms = {s for s in syms if not s.endswith(".X")}
         if not syms:
             continue
         weight = 1.0 + min(max(it.get("score", 0), 0), 1000) / 100.0
@@ -170,51 +175,68 @@ def _process(items: list[dict], stats: dict[str, TickerStats]) -> None:
 
 
 def _scrape_all() -> tuple[dict[str, TickerStats], list[str]]:
+    """Run the four social-media scrapes concurrently. Each is network-bound
+    so threads are fine and we save ~the sum of the slowest stage."""
     stats: dict[str, TickerStats] = {}
     sources_used: list[str] = []
+    t0 = time.time()
 
-    try:
-        reddit_items = reddit.fetch_all(
-            per_sub=REDDIT_PER_SUB,
-            include_comments=FETCH_COMMENTS,
-        )
-        err = reddit.last_error()
-        if reddit_items:
-            tag = " via pullpush" if err and err.startswith("4") else ""
-            sources_used.append(f"reddit({len(reddit_items)}{tag})")
-        elif err:
-            sources_used.append(f"reddit(0; {err})")
-        else:
-            sources_used.append("reddit(0)")
-        _process(reddit_items, stats)
-    except Exception as e:
-        LOG.exception("reddit scrape failed: %s", e)
-        sources_used.append(f"reddit(error: {e})")
+    def _reddit():
+        return reddit.fetch_all(per_sub=REDDIT_PER_SUB,
+                                include_comments=FETCH_COMMENTS)
+    def _stocktwits(): return stocktwits.fetch_all()
+    def _bluesky():    return bluesky.fetch_all()
+    def _twitter():    return twitter.fetch_all() if twitter.is_enabled() else []
 
-    try:
-        st_items = stocktwits.fetch_all()
-        sources_used.append(f"stocktwits({len(st_items)})")
-        _process(st_items, stats)
-    except Exception as e:
-        LOG.exception("stocktwits scrape failed: %s", e)
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        f_r = ex.submit(_reddit)
+        f_s = ex.submit(_stocktwits)
+        f_b = ex.submit(_bluesky)
+        f_t = ex.submit(_twitter)
 
-    try:
-        bs_items = bluesky.fetch_all()
-        sources_used.append(f"bluesky({len(bs_items)})")
-        _process(bs_items, stats)
-    except Exception as e:
-        LOG.exception("bluesky scrape failed: %s", e)
-
-    if twitter.is_enabled():
+        # Reddit
         try:
-            tw_items = twitter.fetch_all()
-            sources_used.append(f"twitter({len(tw_items)})")
-            _process(tw_items, stats)
+            reddit_items = f_r.result()
+            err = reddit.last_error()
+            if reddit_items:
+                tag = " via pullpush" if err and err.startswith("4") else ""
+                sources_used.append(f"reddit({len(reddit_items)}{tag})")
+            elif err:
+                sources_used.append(f"reddit(0; {err})")
+            else:
+                sources_used.append("reddit(0)")
+            _process(reddit_items, stats)
         except Exception as e:
-            LOG.exception("twitter scrape failed: %s", e)
-    else:
-        sources_used.append("twitter(disabled)")
+            LOG.exception("reddit scrape failed: %s", e)
+            sources_used.append(f"reddit(error: {e})")
 
+        try:
+            st_items = f_s.result()
+            sources_used.append(f"stocktwits({len(st_items)})")
+            _process(st_items, stats)
+        except Exception as e:
+            LOG.exception("stocktwits scrape failed: %s", e)
+            sources_used.append(f"stocktwits(error: {e})")
+
+        try:
+            bs_items = f_b.result()
+            sources_used.append(f"bluesky({len(bs_items)})")
+            _process(bs_items, stats)
+        except Exception as e:
+            LOG.exception("bluesky scrape failed: %s", e)
+            sources_used.append(f"bluesky(error: {e})")
+
+        if twitter.is_enabled():
+            try:
+                tw_items = f_t.result()
+                sources_used.append(f"twitter({len(tw_items)})")
+                _process(tw_items, stats)
+            except Exception as e:
+                LOG.exception("twitter scrape failed: %s", e)
+        else:
+            sources_used.append("twitter(disabled)")
+
+    LOG.info("scrape stage took %.1fs (parallel)", time.time() - t0)
     return stats, sources_used
 
 
@@ -329,30 +351,37 @@ def run(top_n: int = 20, window: str = "now") -> dict:
         if not rows:
             rows = rows_now
 
-    # Quotes (Yahoo) -- includes pre/post-market when applicable.
-    quotes = fetch_quotes([r["symbol"] for r in rows])
+    # Enrich top-N in parallel: quotes, sectors, catalysts are all
+    # network-bound and independent.
+    syms_list = [r["symbol"] for r in rows]
+    t_enrich = time.time()
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_q = ex.submit(fetch_quotes, syms_list)
+        f_s = ex.submit(sectors.fetch, syms_list)
+        f_c = ex.submit(catalysts.fetch, syms_list)
+        quotes = f_q.result()
+        secs = f_s.result()
+        cat = f_c.result()
+    LOG.info("enrich stage took %.1fs (parallel)", time.time() - t_enrich)
+
     for r in rows:
-        q = quotes.get(r["symbol"]) or {}
+        sym = r["symbol"]
+        q = quotes.get(sym) or {}
         r["price"] = q.get("price")
         r["change_pct"] = q.get("change_pct")
         r["currency"] = q.get("currency", "")
+        r["price_source"] = q.get("source", "")
         r["pre_price"] = q.get("pre_price")
         r["pre_change_pct"] = q.get("pre_change_pct")
         r["post_price"] = q.get("post_price")
         r["post_change_pct"] = q.get("post_change_pct")
 
-    # Sector + market cap (cached; cheap)
-    secs = sectors.fetch([r["symbol"] for r in rows])
-    for r in rows:
-        s = secs.get(r["symbol"]) or {}
+        s = secs.get(sym) or {}
         r["sector"] = s.get("sector") or ""
         r["industry"] = s.get("industry") or ""
         r["market_cap"] = s.get("market_cap")
 
-    # Catalysts (earnings + news)
-    cat = catalysts.fetch([r["symbol"] for r in rows])
-    for r in rows:
-        c = cat.get(r["symbol"], {})
+        c = cat.get(sym, {})
         r["earnings_date"] = c.get("earnings_date")
         r["earnings_days_out"] = c.get("earnings_days_out")
         r["news"] = c.get("news") or []

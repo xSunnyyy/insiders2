@@ -214,8 +214,22 @@ def fetch_all(subs: Iterable[str] = DEFAULT_SUBS,
               bulk_comments_per_sub: int = 100) -> list[dict]:
     _set_error(None)
     results: list[dict] = []
-    for sub in subs:
-        posts = fetch_subreddit(sub, limit=per_sub)
+    # Fetch subreddits in parallel -- each call is independent and
+    # network-bound. Comments (when enabled) are fetched serially per sub
+    # to keep total fan-out reasonable.
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    posts_by_sub: dict[str, list[dict]] = {}
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futures = {ex.submit(fetch_subreddit, sub, limit=per_sub): sub
+                   for sub in subs}
+        for fut in as_completed(futures):
+            sub = futures[fut]
+            try:
+                posts_by_sub[sub] = fut.result() or []
+            except Exception as e:
+                LOG.warning("reddit %s: %s", sub, e)
+                posts_by_sub[sub] = []
+    for sub, posts in posts_by_sub.items():
         results.extend(posts)
         if include_comments:
             got_any_comments = False
@@ -225,12 +239,8 @@ def fetch_all(subs: Iterable[str] = DEFAULT_SUBS,
                 if cs:
                     got_any_comments = True
                 results.extend(cs)
-                time.sleep(0.5)
             if not got_any_comments:
-                # Per-post permalinks unreachable; bulk-pull recent comments
-                # for the sub from the Pushshift mirror instead.
                 results.extend(_pullpush_comments(sub, bulk_comments_per_sub))
-        time.sleep(1.0)
     LOG.info("reddit: collected %d items (last_error=%s)",
              len(results), _last_error)
     return results
