@@ -11,6 +11,8 @@
     <nav class="topnav">
       <a href="/" class="active">Top 20</a>
       <a href="/watchlist">Watchlist <span id="wl-count" class="badge" hidden></span></a>
+      <a href="/insider">Insider</a>
+      <a href="/earnings">Earnings</a>
     </nav>
     <h1>Social Stock Sentiment</h1>
     <div class="subtitle">
@@ -19,20 +21,39 @@
       <span id="alert-channels"></span>
     </div>
     <div class="controls">
-      <button id="refresh">Refresh now</button>
+      <form id="search-form">
+        <input id="search-input" type="text" placeholder="Jump to ticker…"
+               autocomplete="off" maxlength="8" />
+        <button type="submit">Go</button>
+      </form>
+      <div class="window-tabs" role="tablist">
+        <button class="win active" data-win="now">Now</button>
+        <button class="win" data-win="1h">1h</button>
+        <button class="win" data-win="4h">4h</button>
+        <button class="win" data-win="24h">24h</button>
+        <button class="win" data-win="7d">7d</button>
+      </div>
+      <button id="refresh">Refresh</button>
       <span id="status">Loading…</span>
     </div>
   </header>
 
   <main>
+    <section id="sector-panel" class="panel" hidden>
+      <h2>Sector consensus (top 20)</h2>
+      <div id="sector-chips"></div>
+    </section>
+
     <table id="board">
       <thead>
         <tr>
           <th></th>
           <th>#</th>
           <th>Ticker</th>
+          <th>Sector</th>
           <th>Price</th>
           <th>Change %</th>
+          <th>Pre/Post</th>
           <th>Mentions</th>
           <th>Δ1h</th>
           <th>Δ24h</th>
@@ -41,6 +62,8 @@
           <th>Sentiment</th>
           <th>ΔSent 24h</th>
           <th>Trend</th>
+          <th>Consensus</th>
+          <th>Risk</th>
           <th>Catalyst</th>
           <th>Sources</th>
         </tr>
@@ -54,7 +77,7 @@
     <small>
       Click a ticker for the drill-down. Click ★ to add to your watchlist.
       Sentiment backend: <span id="sentiment-backend">…</span>.
-      Cache TTL: 5 min. Not financial advice.
+      Time windows other than "Now" need accumulated history. Not financial advice.
     </small>
   </footer>
 
@@ -62,6 +85,7 @@
   const $ = (s) => document.querySelector(s);
   const WL_KEY = "stocksent.watchlist.v1";
   let WATCHLIST = new Set(JSON.parse(localStorage.getItem(WL_KEY) || "[]"));
+  let CURRENT_WINDOW = "now";
 
   function saveWL() {
     localStorage.setItem(WL_KEY, JSON.stringify([...WATCHLIST]));
@@ -71,7 +95,6 @@
       else                    { b.hidden = true; }
     }
   }
-  // Run once on load so badge is correct before first render
   saveWL();
 
   function deltaCell(v) {
@@ -81,14 +104,12 @@
     const sign = v > 0 ? "+" : "";
     return `<span class="${cls}">${sign}${v}</span>`;
   }
-
   function zCell(v) {
     if (v == null) return `<span class="muted">—</span>`;
     const cls = v >= 3 ? "bull bold" : (v <= -2 ? "bear" : "muted");
     const sign = v > 0 ? "+" : "";
     return `<span class="${cls}">${sign}${v.toFixed(1)}σ</span>`;
   }
-
   function sparklineSVG(arr) {
     if (!arr || arr.length === 0) return "";
     const max = Math.max(1, ...arr);
@@ -99,24 +120,64 @@
       <polyline fill="none" stroke="currentColor" stroke-width="1.5" points="${pts}"/>
     </svg>`;
   }
-
   function priceCell(t) {
     if (t.price == null) return `<span class="muted">—</span>`;
     return `${t.price.toFixed(2)}`;
   }
-
   function chgCell(v) {
     if (v == null) return `<span class="muted">—</span>`;
     const cls = v > 0 ? "bull" : (v < 0 ? "bear" : "neu");
     const sign = v > 0 ? "+" : "";
     return `<span class="${cls}">${sign}${v.toFixed(2)}%</span>`;
   }
-
+  function prePostCell(t) {
+    const parts = [];
+    if (t.pre_price != null) {
+      const c = t.pre_change_pct;
+      const cls = (c||0) > 0 ? "bull" : ((c||0) < 0 ? "bear" : "neu");
+      const sign = (c||0) > 0 ? "+" : "";
+      parts.push(`<span class="muted">pre</span> ${t.pre_price.toFixed(2)} <span class="${cls}">${sign}${(c||0).toFixed(2)}%</span>`);
+    }
+    if (t.post_price != null) {
+      const c = t.post_change_pct;
+      const cls = (c||0) > 0 ? "bull" : ((c||0) < 0 ? "bear" : "neu");
+      const sign = (c||0) > 0 ? "+" : "";
+      parts.push(`<span class="muted">post</span> ${t.post_price.toFixed(2)} <span class="${cls}">${sign}${(c||0).toFixed(2)}%</span>`);
+    }
+    return parts.length ? parts.join("<br>") : `<span class="muted">—</span>`;
+  }
   function pct(stat) {
     const total = stat.bullish + stat.bearish + stat.neutral;
     return total === 0 ? 0 : Math.round(100 * stat.bullish / total);
   }
-
+  function consensusCell(t) {
+    const trends = t.per_source_trends || {};
+    const cats = ["reddit", "stocktwits", "bluesky", "twitter"];
+    const dots = cats.filter(c => trends[c]).map(c => {
+      const tr = trends[c];
+      const cls = tr === "bullish" ? "bull" : (tr === "bearish" ? "bear" : "neu");
+      return `<span class="dot ${cls}" title="${c}: ${tr}"></span>`;
+    }).join("");
+    const n = t.source_count || 0;
+    const score = t.consensus || 0;
+    const label = n >= 2 && score === 1.0 ? "all agree"
+                : n >= 2 && score >= 0.66 ? "majority"
+                : n >= 2 ? "split"
+                : n === 1 ? "1 src"
+                : "—";
+    return `<div class="consensus">${dots} <span class="muted">${label}</span></div>`;
+  }
+  function riskCell(t) {
+    const flags = t.risk_flags || [];
+    if (!flags.length) return `<span class="muted">—</span>`;
+    const labels = {
+      small_cap: "small-cap",
+      uncaused_spike: "no-catalyst spike",
+      euphoria: ">90% bull",
+      single_source: "1-source",
+    };
+    return flags.map(f => `<span class="risk-chip" title="${f}">${labels[f]||f}</span>`).join(" ");
+  }
   function catalystCell(t) {
     if (!t.catalyst_summary) return `<span class="muted">—</span>`;
     const parts = [];
@@ -139,7 +200,6 @@
     if (WATCHLIST.has(sym)) WATCHLIST.delete(sym);
     else                    WATCHLIST.add(sym);
     saveWL();
-    // Best-effort server sync (works on long-running hosts; no-ops on Vercel).
     if (WATCHLIST.has(sym)) {
       fetch(`/api/watchlist`, {
         method: "POST", headers: {"Content-Type":"application/json"},
@@ -156,18 +216,33 @@
     });
   }
 
+  function renderSectors(summary) {
+    const c = $("#sector-chips");
+    if (!summary || !summary.length) {
+      $("#sector-panel").hidden = true;
+      return;
+    }
+    $("#sector-panel").hidden = false;
+    c.innerHTML = summary.map(s => {
+      const trend = s.trend;
+      const cls = trend === "bullish" ? "bull" : (trend === "bearish" ? "bear" : "neu");
+      return `<span class="sector-chip ${cls}" title="${s.tickers.join(', ')}">
+        ${s.sector} <span class="muted">(${s.count})</span>
+        <span class="score">${s.avg_sentiment.toFixed(2)}</span></span>`;
+    }).join("");
+  }
+
   function render(data) {
-    // Merge any server-side watchlist into local (server may be empty on
-    // stateless hosts; local is the source of truth).
     (data.watchlist || []).forEach(s => WATCHLIST.add(s));
     saveWL();
 
     $("#twitter-status").textContent = data.twitter_enabled
       ? " and Twitter/X" : " (Twitter/X disabled)";
-
     const ch = data.alert_channels || [];
     $("#alert-channels").textContent = ch.length
       ? ` Alerts → ${ch.join(", ")}.` : " No alert channels configured.";
+
+    renderSectors(data.sector_summary || []);
 
     const tbody = $("#board tbody");
     tbody.innerHTML = "";
@@ -183,8 +258,10 @@
         <td class="star-cell"><span class="star" role="button" tabindex="0">${starred ? "★" : "☆"}</span></td>
         <td>${i + 1}</td>
         <td class="ticker"><a href="/ticker/${t.symbol}">${t.symbol}</a></td>
+        <td class="sector muted">${(t.sector || "").slice(0, 18)}</td>
         <td class="price">${priceCell(t)}</td>
         <td class="chg">${chgCell(t.change_pct)}</td>
+        <td class="prepost">${prePostCell(t)}</td>
         <td class="mentions">${t.mentions}</td>
         <td class="delta">${deltaCell(t.delta_mentions_1h)}</td>
         <td class="delta">${deltaCell(t.delta_mentions_24h)}</td>
@@ -202,6 +279,8 @@
                   ? `<span class="bear">${t.delta_sentiment_24h.toFixed(2)}</span>`
                   : `<span class="muted">0.00</span>`))}</td>
         <td class="trend ${t.trend}">${t.trend}</td>
+        <td class="consensus-cell">${consensusCell(t)}</td>
+        <td class="risk-cell">${riskCell(t)}</td>
         <td class="catalyst-cell">${catalystCell(t)}</td>
         <td class="sources">${Object.entries(t.sources)
           .map(([k, v]) => `${k}:${v}`).join(", ")}</td>
@@ -215,20 +294,40 @@
 
     const ts = new Date(data.generated_at * 1000).toLocaleString();
     $("#status").textContent =
-      `Updated ${ts} · sources: ${data.sources.join(", ")} · ${data.duration_sec}s`;
+      `Updated ${ts} · window: ${data.window} · sources: ${data.sources.join(", ")} · ${data.duration_sec}s`;
   }
 
   async function load(force) {
     $("#status").textContent = force ? "Refreshing…" : "Loading…";
     try {
-      const r = await fetch(force ? "/api/refresh" : "/api/trending",
-                            { method: force ? "POST" : "GET" });
+      const path = (force ? "/api/refresh" : "/api/trending")
+                 + `?window=${CURRENT_WINDOW}`;
+      const r = await fetch(path, { method: force ? "POST" : "GET" });
       const data = await r.json();
       render(data);
     } catch (e) {
       $("#status").textContent = "Error: " + e.message;
     }
   }
+
+  // Search box
+  $("#search-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = ($("#search-input").value || "").trim().toUpperCase();
+    if (v && /^[A-Z]{1,6}(\.[A-Z])?$/.test(v)) {
+      location.href = `/ticker/${encodeURIComponent(v)}`;
+    }
+  });
+
+  // Window tabs
+  document.querySelectorAll(".window-tabs .win").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".window-tabs .win").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      CURRENT_WINDOW = b.getAttribute("data-win");
+      load(false);
+    });
+  });
 
   $("#refresh").addEventListener("click", () => load(true));
   load(false);

@@ -11,6 +11,8 @@ from flask import Flask, jsonify, render_template, request
 import aggregator
 import catalysts
 import db
+import earnings as earnings_mod
+import insider as insider_mod
 import prices
 import sentiment
 
@@ -21,24 +23,26 @@ LOG = logging.getLogger("app")
 app = Flask(__name__)
 
 CACHE_TTL_SEC = 5 * 60
-_cache: dict = {"data": None, "fetched_at": 0.0}
+# Per-window cache so the time-window selector doesn't trigger a fresh
+# scrape every click.
+_cache: dict[str, dict] = {}
 _lock = threading.Lock()
 
 
-def _refresh_locked() -> dict:
-    LOG.info("refreshing aggregated data")
-    data = aggregator.run(top_n=20)
-    _cache["data"] = data
-    _cache["fetched_at"] = time.time()
+def _refresh_locked(window: str) -> dict:
+    LOG.info("refreshing aggregated data (window=%s)", window)
+    data = aggregator.run(top_n=20, window=window)
+    _cache[window] = {"data": data, "fetched_at": time.time()}
     return data
 
 
-def get_data(force: bool = False) -> dict:
+def get_data(force: bool = False, window: str = "now") -> dict:
     with _lock:
-        if force or _cache["data"] is None or \
-                (time.time() - _cache["fetched_at"]) > CACHE_TTL_SEC:
-            return _refresh_locked()
-        return _cache["data"]
+        entry = _cache.get(window)
+        if force or entry is None or \
+                (time.time() - entry["fetched_at"]) > CACHE_TTL_SEC:
+            return _refresh_locked(window)
+        return entry["data"]
 
 
 @app.route("/")
@@ -56,14 +60,45 @@ def watchlist_page():
     return render_template("watchlist.html")
 
 
+@app.route("/earnings")
+def earnings_page():
+    return render_template("earnings.html")
+
+
+@app.route("/insider")
+def insider_page():
+    return render_template("insider.html")
+
+
 @app.route("/api/trending")
 def trending():
-    return jsonify(get_data())
+    window = request.args.get("window", "now")
+    if window not in ("now", "1h", "4h", "24h", "7d"):
+        window = "now"
+    return jsonify(get_data(window=window))
 
 
 @app.route("/api/refresh", methods=["POST"])
 def refresh():
-    return jsonify(get_data(force=True))
+    window = request.args.get("window", "now")
+    if window not in ("now", "1h", "4h", "24h", "7d"):
+        window = "now"
+    return jsonify(get_data(force=True, window=window))
+
+
+@app.route("/api/earnings")
+def earnings_api():
+    days = int(request.args.get("days", "14"))
+    return jsonify({"items": earnings_mod.upcoming(days=days)})
+
+
+@app.route("/api/insider")
+def insider_api():
+    view = request.args.get("view", "purchases")
+    limit = int(request.args.get("limit", "50"))
+    if view == "clusters":
+        return jsonify({"items": insider_mod.cluster_buys(limit=limit)})
+    return jsonify({"items": insider_mod.purchases(limit=limit)})
 
 
 @app.route("/api/ticker/<symbol>")

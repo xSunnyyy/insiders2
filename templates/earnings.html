@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Earnings — Social Stock Sentiment</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <nav class="topnav">
+      <a href="/">Top 20</a>
+      <a href="/watchlist">Watchlist</a>
+      <a href="/insider">Insider</a>
+      <a href="/earnings" class="active">Earnings</a>
+    </nav>
+    <h1>Earnings calendar</h1>
+    <div class="subtitle">
+      Upcoming earnings dates for ~200 widely-traded US tickers, sorted by
+      days out. Source: Yahoo Finance. Cached 6h.
+    </div>
+    <div class="controls">
+      <label>Window:
+        <select id="days">
+          <option value="7">7 days</option>
+          <option value="14" selected>14 days</option>
+          <option value="30">30 days</option>
+        </select>
+      </label>
+      <button id="refresh">Refresh</button>
+      <span id="status"></span>
+    </div>
+  </header>
+  <main>
+    <table id="board">
+      <thead>
+        <tr>
+          <th>Ticker</th>
+          <th>Earnings date</th>
+          <th>Days out</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>No earnings in window.</div>
+  </main>
+  <footer>
+    <small>Click a ticker for its drill-down. Not financial advice.</small>
+  </footer>
+
+  <script>
+  const $ = (s) => document.querySelector(s);
+
+  async function load() {
+    const days = $("#days").value;
+    $("#status").textContent = "Loading…";
+    try {
+      const r = await fetch(`/api/earnings?days=${days}`);
+      const j = await r.json();
+      const tbody = $("#board tbody");
+      tbody.innerHTML = "";
+      const items = j.items || [];
+      $("#empty").hidden = items.length > 0;
+      items.forEach(it => {
+        const tr = document.createElement("tr");
+        const tag = it.earnings_days_out === 0 ? "ER today"
+                  : (it.earnings_days_out === 1 ? "tomorrow"
+                  : `${it.earnings_days_out} d`);
+        tr.innerHTML = `
+          <td class="ticker"><a href="/ticker/${it.symbol}">${it.symbol}</a></td>
+          <td>${it.earnings_date || ""}</td>
+          <td><span class="catalyst er">${tag}</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      $("#status").textContent = `${items.length} tickers in window`;
+    } catch (e) {
+      $("#status").textContent = "Error: " + e.message;
+    }
+  }
+
+  $("#refresh").addEventListener("click", load);
+  $("#days").addEventListener("change", load);
+  load();
+  </script>
+</body>
+</html>

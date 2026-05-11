@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Insider — Social Stock Sentiment</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <header>
+    <nav class="topnav">
+      <a href="/">Top 20</a>
+      <a href="/watchlist">Watchlist</a>
+      <a href="/insider" class="active">Insider</a>
+      <a href="/earnings">Earnings</a>
+    </nav>
+    <h1>Insider buying</h1>
+    <div class="subtitle">
+      Recent Form 4 insider purchases &gt;= $25k. Source: openinsider.com
+      (scraped, cached 1h).
+    </div>
+    <div class="controls">
+      <label>View:
+        <select id="view">
+          <option value="purchases">Latest purchases</option>
+          <option value="clusters">Cluster buys</option>
+        </select>
+      </label>
+      <button id="refresh">Refresh</button>
+      <span id="status"></span>
+    </div>
+  </header>
+  <main>
+    <table id="board">
+      <thead>
+        <tr>
+          <th>Trade date</th>
+          <th>Ticker</th>
+          <th>Company</th>
+          <th>Insider</th>
+          <th>Title</th>
+          <th>Price</th>
+          <th>Qty</th>
+          <th>Value ($)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+    <div id="empty" class="empty" hidden>No rows.</div>
+  </main>
+  <footer>
+    <small>
+      Cluster buys (multiple insiders buying the same name in a short window)
+      tend to be the highest-signal subset. Not financial advice.
+    </small>
+  </footer>
+
+  <script>
+  const $ = (s) => document.querySelector(s);
+
+  function fmtMoney(v) {
+    if (v == null) return "—";
+    const n = Number(v);
+    if (n >= 1e6) return `$${(n/1e6).toFixed(2)}M`;
+    if (n >= 1e3) return `$${(n/1e3).toFixed(0)}k`;
+    return `$${n.toFixed(0)}`;
+  }
+  function fmtQty(v) {
+    if (v == null) return "—";
+    return Number(v).toLocaleString();
+  }
+
+  async function load() {
+    const view = $("#view").value;
+    $("#status").textContent = "Loading…";
+    try {
+      const r = await fetch(`/api/insider?view=${view}&limit=100`);
+      const j = await r.json();
+      const items = j.items || [];
+      const tbody = $("#board tbody");
+      tbody.innerHTML = "";
+      $("#empty").hidden = items.length > 0;
+      items.forEach(it => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="muted">${it.trade_date || ""}</td>
+          <td class="ticker"><a href="/ticker/${it.ticker}">${it.ticker}</a></td>
+          <td>${(it.company || "").slice(0, 32)}</td>
+          <td>${(it.insider_name || "").slice(0, 28)}</td>
+          <td class="muted">${(it.title || "").slice(0, 24)}</td>
+          <td class="price">${it.price ? it.price.toFixed(2) : "—"}</td>
+          <td class="mentions">${fmtQty(it.qty)}</td>
+          <td class="mentions bull">${fmtMoney(it.value)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+      $("#status").textContent = `${items.length} rows`;
+    } catch (e) {
+      $("#status").textContent = "Error: " + e.message;
+    }
+  }
+
+  $("#refresh").addEventListener("click", load);
+  $("#view").addEventListener("change", load);
+  load();
+  </script>
+</body>
+</html>

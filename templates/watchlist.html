@@ -11,6 +11,8 @@
     <nav class="topnav">
       <a href="/">Top 20</a>
       <a href="/watchlist" class="active">Watchlist</a>
+      <a href="/insider">Insider</a>
+      <a href="/earnings">Earnings</a>
     </nav>
     <h1>Watchlist</h1>
     <div class="subtitle">
@@ -24,6 +26,7 @@
         <button type="submit">Add</button>
       </form>
       <button id="refresh">Refresh</button>
+      <button id="enable-notify">Enable browser alerts</button>
       <button id="clear-all" class="danger">Clear all</button>
       <span id="status"></span>
     </div>
@@ -41,6 +44,8 @@
           <th>Sentiment</th>
           <th>Trend</th>
           <th>Catalyst</th>
+          <th>Alert ≤</th>
+          <th>Alert ≥</th>
           <th>In top 20?</th>
         </tr>
       </thead>
@@ -63,9 +68,54 @@
   <script>
   const $ = (s) => document.querySelector(s);
   const WL_KEY = "stocksent.watchlist.v1";
+  const PA_KEY = "stocksent.price_alerts.v1";  // {sym: {lo, hi, fired_lo, fired_hi}}
 
   function load() { return JSON.parse(localStorage.getItem(WL_KEY) || "[]"); }
   function save(arr) { localStorage.setItem(WL_KEY, JSON.stringify(arr)); }
+  function loadAlerts() { return JSON.parse(localStorage.getItem(PA_KEY) || "{}"); }
+  function saveAlerts(o) { localStorage.setItem(PA_KEY, JSON.stringify(o)); }
+
+  function setAlert(sym, kind, value) {
+    const a = loadAlerts();
+    a[sym] = a[sym] || {};
+    if (value === "" || value == null || isNaN(Number(value))) {
+      delete a[sym][kind];
+      delete a[sym]["fired_" + kind];
+    } else {
+      a[sym][kind] = Number(value);
+      delete a[sym]["fired_" + kind];   // re-arm when threshold changes
+    }
+    if (!a[sym].lo && !a[sym].hi) delete a[sym];
+    saveAlerts(a);
+  }
+
+  function notify(title, body) {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "granted") {
+      try { new Notification(title, {body}); } catch (e) {}
+    }
+  }
+
+  function checkPriceAlerts(rows) {
+    const a = loadAlerts();
+    let changed = false;
+    rows.forEach(r => {
+      if (r.price == null) return;
+      const rule = a[r.symbol];
+      if (!rule) return;
+      if (rule.lo != null && r.price <= rule.lo && !rule.fired_lo) {
+        notify(`${r.symbol} crossed ≤ ${rule.lo}`,
+               `Price ${r.price.toFixed(2)} ≤ alert ${rule.lo}`);
+        rule.fired_lo = true; changed = true;
+      }
+      if (rule.hi != null && r.price >= rule.hi && !rule.fired_hi) {
+        notify(`${r.symbol} crossed ≥ ${rule.hi}`,
+               `Price ${r.price.toFixed(2)} ≥ alert ${rule.hi}`);
+        rule.fired_hi = true; changed = true;
+      }
+    });
+    if (changed) saveAlerts(a);
+  }
 
   function fmt(n, d=2) { return n == null ? "—" : Number(n).toFixed(d); }
 
@@ -157,11 +207,15 @@
 
       // Preserve user-order from localStorage
       const byS = Object.fromEntries((j.tickers || []).map(t => [t.symbol, t]));
+      const alerts = loadAlerts();
       wl.forEach(sym => {
         const t = byS[sym] || {symbol: sym};
         const inTop = t.in_top20
           ? `<span class="bull">yes</span>`
           : `<span class="muted">no</span>`;
+        const rule = alerts[sym] || {};
+        const lo = rule.lo != null ? rule.lo : "";
+        const hi = rule.hi != null ? rule.hi : "";
         const tr = document.createElement("tr");
         tr.classList.add("trend-" + (t.trend || "neutral"));
         tr.innerHTML = `
@@ -173,11 +227,20 @@
           <td><span class="score">${fmt(t.avg_sentiment, 2)}</span></td>
           <td>${trendCell(t.trend)}</td>
           <td class="catalyst-cell">${catalystCell(t)}</td>
+          <td><input class="alert-input alert-lo" type="number" step="0.01" min="0"
+                     value="${lo}" data-sym="${sym}" placeholder="—"></td>
+          <td><input class="alert-input alert-hi" type="number" step="0.01" min="0"
+                     value="${hi}" data-sym="${sym}" placeholder="—"></td>
           <td>${inTop}</td>
         `;
         tr.querySelector(".remove").addEventListener("click", () => removeSymbol(sym));
+        tr.querySelector(".alert-lo").addEventListener("change", (e) =>
+          setAlert(sym, "lo", e.target.value));
+        tr.querySelector(".alert-hi").addEventListener("change", (e) =>
+          setAlert(sym, "hi", e.target.value));
         tbody.appendChild(tr);
       });
+      checkPriceAlerts(j.tickers || []);
       $("#status").textContent =
         `Updated ${new Date((j.generated_at||Date.now()/1000)*1000).toLocaleString()}`;
     } catch (e) {
@@ -191,8 +254,36 @@
   });
   $("#refresh").addEventListener("click", () => render());
   $("#clear-all").addEventListener("click", clearAll);
+  $("#enable-notify").addEventListener("click", async () => {
+    if (!("Notification" in window)) {
+      $("#status").textContent = "This browser doesn't support notifications.";
+      return;
+    }
+    const res = await Notification.requestPermission();
+    $("#status").textContent = `Notifications: ${res}`;
+    if (res === "granted") {
+      $("#enable-notify").classList.add("active");
+    }
+  });
+  if ("Notification" in window && Notification.permission === "granted") {
+    $("#enable-notify").classList.add("active");
+  }
 
   render();
+  // Re-check prices every 60s without re-rendering the whole table.
+  setInterval(async () => {
+    const wl = load();
+    if (!wl.length) return;
+    try {
+      const r = await fetch("/api/watchlist/data", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({symbols: wl}),
+      });
+      const j = await r.json();
+      checkPriceAlerts(j.tickers || []);
+    } catch (e) {}
+  }, 60 * 1000);
   </script>
 </body>
 </html>
