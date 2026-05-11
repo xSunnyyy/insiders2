@@ -154,6 +154,13 @@ button.danger { background: var(--bear); }
   background: var(--bull);
 }
 
+.src-badge {
+  display: inline-block; margin-left: 4px; padding: 0 4px;
+  background: rgba(88,166,255,0.18); color: var(--link);
+  border-radius: 3px; font-size: 9px; font-weight: 700;
+  vertical-align: top;
+}
+
 .refreshing {
   display: inline-block;
   color: var(--neu);

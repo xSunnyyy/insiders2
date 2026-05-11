@@ -70,46 +70,63 @@
     return Number(v).toLocaleString();
   }
 
-  async function load() {
+  function renderRows(j) {
+    const items = j.items || [];
+    const tbody = $("#board tbody");
+    tbody.innerHTML = "";
+    $("#empty").hidden = items.length > 0;
+    if (!items.length) {
+      $("#empty").innerHTML = j.error
+        ? `No rows. Source diagnostics: <code>${j.error}</code>.<br>
+           openinsider.com may be temporarily unreachable from this server
+           -- the Yahoo fallback will populate within a few seconds.`
+        : `No rows.`;
+    }
+    items.forEach(it => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="muted">${it.trade_date || ""}</td>
+        <td class="ticker"><a href="/ticker/${it.ticker}">${it.ticker}</a></td>
+        <td>${(it.company || "").slice(0, 32)}</td>
+        <td>${(it.insider_name || "").slice(0, 28)}</td>
+        <td class="muted">${(it.title || "").slice(0, 24)}</td>
+        <td class="price">${it.price ? it.price.toFixed(2) : "—"}</td>
+        <td class="mentions">${fmtQty(it.qty)}</td>
+        <td class="mentions bull">${fmtMoney(it.value)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+    const age = j.age_sec != null ? `, ${j.age_sec}s old` : "";
+    $("#status").textContent = `${items.length} rows${age}`;
+  }
+
+  async function load(force) {
     const view = $("#view").value;
-    $("#status").textContent = "Loading…";
+    $("#status").textContent = force ? "Refreshing…" : "Loading…";
     try {
-      const r = await fetch(`/api/insider?view=${view}&limit=100`);
+      const url = force
+        ? `/api/insider/refresh?view=${view}&limit=100`
+        : `/api/insider?view=${view}&limit=100`;
+      const r = await fetch(url, {method: force ? "POST" : "GET"});
       const j = await r.json();
-      const items = j.items || [];
-      const tbody = $("#board tbody");
-      tbody.innerHTML = "";
-      $("#empty").hidden = items.length > 0;
-      if (!items.length) {
-        $("#empty").innerHTML = j.error
-          ? `No rows. Source diagnostics: <code>${j.error}</code>.<br>
-             openinsider.com may be temporarily unreachable from this server
-             -- try again in a minute or check the host directly.`
-          : `No rows.`;
+      renderRows(j);
+
+      if (!force && j.stale) {
+        $("#status").innerHTML += ` <span class="refreshing">⟳ refreshing…</span>`;
+        try {
+          const r2 = await fetch(`/api/insider/refresh?view=${view}&limit=100`,
+                                 {method: "POST"});
+          renderRows(await r2.json());
+        } catch (e) {}
       }
-      items.forEach(it => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="muted">${it.trade_date || ""}</td>
-          <td class="ticker"><a href="/ticker/${it.ticker}">${it.ticker}</a></td>
-          <td>${(it.company || "").slice(0, 32)}</td>
-          <td>${(it.insider_name || "").slice(0, 28)}</td>
-          <td class="muted">${(it.title || "").slice(0, 24)}</td>
-          <td class="price">${it.price ? it.price.toFixed(2) : "—"}</td>
-          <td class="mentions">${fmtQty(it.qty)}</td>
-          <td class="mentions bull">${fmtMoney(it.value)}</td>
-        `;
-        tbody.appendChild(tr);
-      });
-      $("#status").textContent = `${items.length} rows`;
     } catch (e) {
       $("#status").textContent = "Error: " + e.message;
     }
   }
 
-  $("#refresh").addEventListener("click", load);
-  $("#view").addEventListener("change", load);
-  load();
+  $("#refresh").addEventListener("click", () => load(true));
+  $("#view").addEventListener("change", () => load(false));
+  load(false);
   </script>
 </body>
 </html>
