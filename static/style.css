@@ -154,6 +154,17 @@ button.danger { background: var(--bear); }
   background: var(--bull);
 }
 
+.refreshing {
+  display: inline-block;
+  color: var(--neu);
+  font-size: 12px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1.0; }
+}
+
 /* Mobile responsive */
 @media (max-width: 900px) {
   header { padding: 16px; }
