@@ -41,10 +41,33 @@ set. App-only tokens give you 100 requests/min, plenty for this workload.
 
 ## Live quotes
 
-Stocktwits' free messaging API doesn't return prices, so the dashboard pulls
-**price + change %** for the top-20 tickers from Yahoo Finance's
-unauthenticated v8 chart endpoint (`prices.py`). Quotes are fetched in
-parallel and cached alongside the rest of the snapshot (5-min TTL).
+Prices come from a four-tier fallback chain in `prices.py`:
+
+1. **Yahoo `v7/finance/quote`** — one batched call for all 20 symbols.
+   Has pre/post-market inline.
+2. **Yahoo `v8/finance/chart`** — per-symbol, used for symbols v7 missed.
+3. **Stooq CSV** — free, no key, different host.
+4. **Finnhub** — keyed, only used if `FINNHUB_API_KEY` is set. **This is
+   the only tier that reliably works from cloud / Vercel / AWS IPs**
+   because Yahoo and Stooq actively block those.
+
+Each row in the dashboard shows a tiny `Y7`/`Y8`/`S`/`F` badge next to the
+price indicating which source served it; the status line shows the
+aggregate (e.g. `prices [Y7: 18, finnhub: 2]`).
+
+### If your dashboard shows `prices [no price: 20]` on Vercel/AWS
+
+Yahoo and Stooq are blocked from your host's IP range — this is the
+norm, not the exception, for cloud providers. Add a free Finnhub key:
+
+1. Sign up at https://finnhub.io/register (no credit card).
+2. Copy your API key.
+3. In **Vercel → Project Settings → Environment Variables**, add
+   `FINNHUB_API_KEY=<your key>`.
+4. Redeploy.
+
+Free tier is 60 calls/min, which is plenty for this app (20 symbols ×
+roughly 1 refresh / 5 minutes = ~4 calls/min worst case).
 
 ## How sentiment is decided
 

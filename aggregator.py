@@ -22,7 +22,7 @@ import alerts
 import catalysts
 import db
 import sectors
-from prices import fetch_quotes
+from prices import fetch_quotes, finnhub_enabled
 from scrapers import bluesky, reddit, stocktwits, twitter
 from sentiment import label, score
 from tickers import extract_tickers
@@ -417,7 +417,8 @@ def run(top_n: int = 20, window: str = "now") -> dict:
 
     # Aggregate price-source counts so the UI can show which path worked
     # (yahoo-v7 / yahoo-v8 / stooq / none).
-    src_counts = {"yahoo-v7": 0, "yahoo-v8": 0, "stooq": 0, "none": 0}
+    src_counts = {"yahoo-v7": 0, "yahoo-v8": 0, "stooq": 0,
+                  "finnhub": 0, "none": 0}
     for r in rows:
         s = r.get("price_source") or ""
         if r.get("price") is None:
@@ -454,6 +455,7 @@ def run(top_n: int = 20, window: str = "now") -> dict:
         "duration_sec": round(time.time() - started, 2),
         "sources": sources_used,
         "price_source_counts": src_counts,
+        "finnhub_enabled": finnhub_enabled(),
         "twitter_enabled": twitter.is_enabled(),
         "alert_channels": alerts.channels_configured(),
         "watchlist": db.watchlist_get(),

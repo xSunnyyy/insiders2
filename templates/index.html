@@ -41,6 +41,19 @@
   </header>
 
   <main>
+    <section id="no-price-banner" class="banner" hidden>
+      <strong>No prices loading.</strong>
+      Yahoo and Stooq are blocked from this host's IP (common on Vercel/AWS).
+      To fix this, get a free Finnhub API key and set <code>FINNHUB_API_KEY</code>
+      in your project's environment variables:
+      <ol>
+        <li>Sign up at <a href="https://finnhub.io/register" target="_blank" rel="noopener">finnhub.io/register</a> (no credit card)</li>
+        <li>Copy your API key from the dashboard</li>
+        <li>In Vercel: Settings → Environment Variables → add <code>FINNHUB_API_KEY=&lt;your key&gt;</code></li>
+        <li>Redeploy. Free tier: 60 calls/min — plenty for this app.</li>
+      </ol>
+    </section>
+
     <section id="sector-panel" class="panel" hidden>
       <h2>Sector consensus (top 20)</h2>
       <div id="sector-chips"></div>
@@ -311,9 +324,16 @@
     if (psc["yahoo-v7"]) parts.push(`Y7: ${psc["yahoo-v7"]}`);
     if (psc["yahoo-v8"]) parts.push(`Y8: ${psc["yahoo-v8"]}`);
     if (psc["stooq"])    parts.push(`stooq: ${psc["stooq"]}`);
+    if (psc["finnhub"])  parts.push(`finnhub: ${psc["finnhub"]}`);
     if (psc["none"])     parts.push(`<span class="bear">no price: ${psc["none"]}</span>`);
     $("#price-sources").innerHTML = parts.length
       ? ` · prices [${parts.join(", ")}]` : "";
+
+    // Banner: prices all failed AND no Finnhub key configured.
+    const totalRows = data.tickers ? data.tickers.length : 0;
+    const noPriceCount = psc["none"] || 0;
+    const allFailed = totalRows > 0 && noPriceCount === totalRows;
+    $("#no-price-banner").hidden = !(allFailed && !data.finnhub_enabled);
   }
 
   async function load(force) {
