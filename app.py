@@ -89,7 +89,11 @@ def refresh():
 @app.route("/api/earnings")
 def earnings_api():
     days = int(request.args.get("days", "14"))
-    return jsonify({"items": earnings_mod.upcoming(days=days)})
+    items = earnings_mod.upcoming(days=days)
+    return jsonify({
+        "items": items,
+        "status": earnings_mod.last_status(),
+    })
 
 
 @app.route("/api/insider")
@@ -97,8 +101,13 @@ def insider_api():
     view = request.args.get("view", "purchases")
     limit = int(request.args.get("limit", "50"))
     if view == "clusters":
-        return jsonify({"items": insider_mod.cluster_buys(limit=limit)})
-    return jsonify({"items": insider_mod.purchases(limit=limit)})
+        items = insider_mod.cluster_buys(limit=limit)
+    else:
+        items = insider_mod.purchases(limit=limit)
+    return jsonify({
+        "items": items,
+        "error": insider_mod.last_error(),
+    })
 
 
 @app.route("/api/ticker/<symbol>")

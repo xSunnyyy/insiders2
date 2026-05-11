@@ -46,7 +46,7 @@
       </thead>
       <tbody></tbody>
     </table>
-    <div id="empty" class="empty" hidden>No rows.</div>
+    <div id="empty" class="empty" hidden></div>
   </main>
   <footer>
     <small>
@@ -80,6 +80,13 @@
       const tbody = $("#board tbody");
       tbody.innerHTML = "";
       $("#empty").hidden = items.length > 0;
+      if (!items.length) {
+        $("#empty").innerHTML = j.error
+          ? `No rows. Source diagnostics: <code>${j.error}</code>.<br>
+             openinsider.com may be temporarily unreachable from this server
+             -- try again in a minute or check the host directly.`
+          : `No rows.`;
+      }
       items.forEach(it => {
         const tr = document.createElement("tr");
         tr.innerHTML = `

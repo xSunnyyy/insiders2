@@ -60,7 +60,19 @@
       const tbody = $("#board tbody");
       tbody.innerHTML = "";
       const items = j.items || [];
+      const st = j.status || {};
       $("#empty").hidden = items.length > 0;
+      if (!items.length) {
+        $("#empty").innerHTML = (st.fetched && st.with_dates === 0)
+          ? `Scanned <b>${st.fetched}</b>/${st.universe_size} tickers
+             in ${st.duration_sec}s. <b>0</b> returned an upcoming earnings
+             date -- Yahoo's calendarEvents endpoint likely refused the crumb
+             from this host. Try refreshing in a minute.`
+          : (st.fetched
+              ? `Scanned ${st.fetched} tickers, ${st.with_dates} had ER
+                 dates, none within window. Widen to 30 days.`
+              : `No earnings data fetched yet -- try refreshing.`);
+      }
       items.forEach(it => {
         const tr = document.createElement("tr");
         const tag = it.earnings_days_out === 0 ? "ER today"
