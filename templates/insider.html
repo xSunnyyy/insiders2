@@ -5,6 +5,7 @@
   <title>Insider — Social Stock Sentiment</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="{{ url_for('static', filename='sort.js') }}"></script>
 </head>
 <body>
   <header>
@@ -34,14 +35,14 @@
     <table id="board">
       <thead>
         <tr>
-          <th>Trade date</th>
-          <th>Ticker</th>
-          <th>Company</th>
-          <th>Insider</th>
-          <th>Title</th>
-          <th>Price</th>
-          <th>Qty</th>
-          <th>Value ($)</th>
+          <th data-sort="date">Trade date</th>
+          <th data-sort="ticker">Ticker</th>
+          <th data-sort="company">Company</th>
+          <th data-sort="insider">Insider</th>
+          <th data-sort="title">Title</th>
+          <th data-sort="price">Price</th>
+          <th data-sort="qty">Qty</th>
+          <th data-sort="value">Value ($)</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -70,19 +71,21 @@
     return Number(v).toLocaleString();
   }
 
-  function renderRows(j) {
-    const items = j.items || [];
+  let ROWS = [];
+  let LAST_META = {};
+
+  function paint() {
     const tbody = $("#board tbody");
     tbody.innerHTML = "";
-    $("#empty").hidden = items.length > 0;
-    if (!items.length) {
-      $("#empty").innerHTML = j.error
-        ? `No rows. Source diagnostics: <code>${j.error}</code>.<br>
+    $("#empty").hidden = ROWS.length > 0;
+    if (!ROWS.length) {
+      $("#empty").innerHTML = LAST_META.error
+        ? `No rows. Source diagnostics: <code>${LAST_META.error}</code>.<br>
            openinsider.com may be temporarily unreachable from this server
            -- the Yahoo fallback will populate within a few seconds.`
         : `No rows.`;
     }
-    items.forEach(it => {
+    ROWS.forEach(it => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td class="muted">${it.trade_date || ""}</td>
@@ -96,8 +99,29 @@
       `;
       tbody.appendChild(tr);
     });
-    const age = j.age_sec != null ? `, ${j.age_sec}s old` : "";
-    $("#status").textContent = `${items.length} rows${age}`;
+    makeSortable($("#board"), {
+      getRows: () => ROWS,
+      setRows: (r) => { ROWS = r; },
+      render:  paint,
+      accessors: {
+        date:    r => r.trade_date || "",
+        ticker:  r => r.ticker || "",
+        company: r => r.company || "",
+        insider: r => r.insider_name || "",
+        title:   r => r.title || "",
+        price:   r => r.price,
+        qty:     r => r.qty,
+        value:   r => r.value,
+      },
+    });
+    const age = LAST_META.age_sec != null ? `, ${LAST_META.age_sec}s old` : "";
+    $("#status").textContent = `${ROWS.length} rows${age}`;
+  }
+
+  function renderRows(j) {
+    ROWS = j.items || [];
+    LAST_META = j;
+    paint();
   }
 
   async function load(force) {
