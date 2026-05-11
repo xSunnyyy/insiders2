@@ -5,6 +5,7 @@
   <title>Watchlist — Social Stock Sentiment</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="{{ url_for('static', filename='sort.js') }}"></script>
 </head>
 <body>
   <header>
@@ -37,16 +38,16 @@
       <thead>
         <tr>
           <th></th>
-          <th>Ticker</th>
-          <th>Price</th>
-          <th>Change %</th>
-          <th>Mentions</th>
-          <th>Sentiment</th>
-          <th>Trend</th>
+          <th data-sort="ticker">Ticker</th>
+          <th data-sort="price">Price</th>
+          <th data-sort="change">Change %</th>
+          <th data-sort="mentions">Mentions</th>
+          <th data-sort="sentiment">Sentiment</th>
+          <th data-sort="trend">Trend</th>
           <th>Catalyst</th>
           <th>Alert ≤</th>
           <th>Alert ≥</th>
-          <th>In top 20?</th>
+          <th data-sort="intop">In top 20?</th>
         </tr>
       </thead>
       <tbody></tbody>
@@ -184,17 +185,70 @@
     render();
   }
 
+  let ROWS = [];   // current view rows; mutated in place by sorting
+
+  function renderRows() {
+    const tbody = $("#board tbody");
+    tbody.innerHTML = "";
+    const alerts = loadAlerts();
+    ROWS.forEach(t => {
+      const sym = t.symbol;
+      const inTop = t.in_top20
+        ? `<span class="bull">yes</span>`
+        : `<span class="muted">no</span>`;
+      const rule = alerts[sym] || {};
+      const lo = rule.lo != null ? rule.lo : "";
+      const hi = rule.hi != null ? rule.hi : "";
+      const tr = document.createElement("tr");
+      tr.classList.add("trend-" + (t.trend || "neutral"));
+      tr.innerHTML = `
+        <td class="star-cell"><span class="star remove" title="Remove">✕</span></td>
+        <td class="ticker"><a href="/ticker/${t.symbol}">${t.symbol}</a></td>
+        <td class="price">${t.price == null ? `<span class="muted">—</span>` : fmt(t.price)}</td>
+        <td class="chg">${chgCell(t.change_pct)}</td>
+        <td class="mentions">${t.mentions ?? 0}</td>
+        <td><span class="score">${fmt(t.avg_sentiment, 2)}</span></td>
+        <td>${trendCell(t.trend)}</td>
+        <td class="catalyst-cell">${catalystCell(t)}</td>
+        <td><input class="alert-input alert-lo" type="number" step="0.01" min="0"
+                   value="${lo}" data-sym="${sym}" placeholder="—"></td>
+        <td><input class="alert-input alert-hi" type="number" step="0.01" min="0"
+                   value="${hi}" data-sym="${sym}" placeholder="—"></td>
+        <td>${inTop}</td>
+      `;
+      tr.querySelector(".remove").addEventListener("click", () => removeSymbol(sym));
+      tr.querySelector(".alert-lo").addEventListener("change", (e) =>
+        setAlert(sym, "lo", e.target.value));
+      tr.querySelector(".alert-hi").addEventListener("change", (e) =>
+        setAlert(sym, "hi", e.target.value));
+      tbody.appendChild(tr);
+    });
+    // Idempotent: wires headers once, then just resorts on click.
+    makeSortable($("#board"), {
+      getRows: () => ROWS,
+      setRows: (r) => { ROWS = r; },
+      render:  renderRows,
+      accessors: {
+        ticker:    r => r.symbol,
+        price:     r => r.price,
+        change:    r => r.change_pct,
+        mentions:  r => r.mentions,
+        sentiment: r => r.avg_sentiment,
+        trend:     r => r.trend,
+        intop:     r => r.in_top20 ? 1 : 0,
+      },
+    });
+  }
+
   async function render() {
     const wl = load();
     $("#empty").hidden = wl.length > 0;
-    const tbody = $("#board tbody");
-
     if (!wl.length) {
-      tbody.innerHTML = "";
+      ROWS = [];
+      renderRows();
       $("#status").textContent = "";
       return;
     }
-
     $("#status").textContent = "Loading…";
     try {
       const r = await fetch("/api/watchlist/data", {
@@ -203,43 +257,9 @@
         body: JSON.stringify({symbols: wl}),
       });
       const j = await r.json();
-      tbody.innerHTML = "";
-
-      // Preserve user-order from localStorage
       const byS = Object.fromEntries((j.tickers || []).map(t => [t.symbol, t]));
-      const alerts = loadAlerts();
-      wl.forEach(sym => {
-        const t = byS[sym] || {symbol: sym};
-        const inTop = t.in_top20
-          ? `<span class="bull">yes</span>`
-          : `<span class="muted">no</span>`;
-        const rule = alerts[sym] || {};
-        const lo = rule.lo != null ? rule.lo : "";
-        const hi = rule.hi != null ? rule.hi : "";
-        const tr = document.createElement("tr");
-        tr.classList.add("trend-" + (t.trend || "neutral"));
-        tr.innerHTML = `
-          <td class="star-cell"><span class="star remove" title="Remove">✕</span></td>
-          <td class="ticker"><a href="/ticker/${t.symbol}">${t.symbol}</a></td>
-          <td class="price">${t.price == null ? `<span class="muted">—</span>` : fmt(t.price)}</td>
-          <td class="chg">${chgCell(t.change_pct)}</td>
-          <td class="mentions">${t.mentions ?? 0}</td>
-          <td><span class="score">${fmt(t.avg_sentiment, 2)}</span></td>
-          <td>${trendCell(t.trend)}</td>
-          <td class="catalyst-cell">${catalystCell(t)}</td>
-          <td><input class="alert-input alert-lo" type="number" step="0.01" min="0"
-                     value="${lo}" data-sym="${sym}" placeholder="—"></td>
-          <td><input class="alert-input alert-hi" type="number" step="0.01" min="0"
-                     value="${hi}" data-sym="${sym}" placeholder="—"></td>
-          <td>${inTop}</td>
-        `;
-        tr.querySelector(".remove").addEventListener("click", () => removeSymbol(sym));
-        tr.querySelector(".alert-lo").addEventListener("change", (e) =>
-          setAlert(sym, "lo", e.target.value));
-        tr.querySelector(".alert-hi").addEventListener("change", (e) =>
-          setAlert(sym, "hi", e.target.value));
-        tbody.appendChild(tr);
-      });
+      ROWS = wl.map(sym => byS[sym] || {symbol: sym});
+      renderRows();
       checkPriceAlerts(j.tickers || []);
       $("#status").textContent =
         `Updated ${new Date((j.generated_at||Date.now()/1000)*1000).toLocaleString()}`;

@@ -154,6 +154,13 @@ button.danger { background: var(--bear); }
   background: var(--bull);
 }
 
+th.sortable {
+  cursor: pointer; user-select: none;
+}
+th.sortable:hover { color: var(--text); }
+th.sort-asc::after  { content: " ▲"; color: var(--link); font-size: 9px; }
+th.sort-desc::after { content: " ▼"; color: var(--link); font-size: 9px; }
+
 .banner {
   background: rgba(210,153,34,0.10);
   border: 1px solid rgba(210,153,34,0.5);

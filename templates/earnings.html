@@ -5,6 +5,7 @@
   <title>Earnings — Social Stock Sentiment</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="{{ url_for('static', filename='sort.js') }}"></script>
 </head>
 <body>
   <header>
@@ -47,14 +48,14 @@
     <table id="board">
       <thead>
         <tr>
-          <th>Date</th>
-          <th>When</th>
-          <th>Ticker</th>
-          <th>Company</th>
-          <th>Market cap</th>
-          <th>EPS est.</th>
-          <th>Last year</th>
-          <th># ests</th>
+          <th data-sort="date">Date</th>
+          <th data-sort="when">When</th>
+          <th data-sort="ticker">Ticker</th>
+          <th data-sort="name">Company</th>
+          <th data-sort="mcap">Market cap</th>
+          <th data-sort="eps">EPS est.</th>
+          <th data-sort="lasteps">Last year</th>
+          <th data-sort="ests"># ests</th>
           <th>Qtr</th>
         </tr>
       </thead>
@@ -138,6 +139,31 @@
         <td class="muted">${it.fiscal_quarter || "—"}</td>
       `;
       tbody.appendChild(tr);
+    });
+    // Sortable headers: sort the underlying ALL_ROWS so order persists
+    // across filter input changes.
+    const parseEPS = (s) => {
+      if (!s) return null;
+      const t = String(s).replace(/[^\d.()\-]/g, "");
+      if (!t) return null;
+      const isNeg = t.startsWith("(");
+      const n = Number(t.replace(/[()]/g, ""));
+      return Number.isFinite(n) ? (isNeg ? -n : n) : null;
+    };
+    makeSortable($("#board"), {
+      getRows: () => ALL_ROWS,
+      setRows: (r) => { ALL_ROWS = r; },
+      render:  renderRows,
+      accessors: {
+        date:    r => r.earnings_date,
+        when:    r => (r.time || "").replace("time-", ""),
+        ticker:  r => r.symbol,
+        name:    r => r.name || "",
+        mcap:    r => parseMcap(r.market_cap),
+        eps:     r => parseEPS(r.eps_forecast),
+        lasteps: r => parseEPS(r.last_year_eps),
+        ests:    r => Number(r.no_of_ests) || null,
+      },
     });
     $("#status").textContent =
       `${rows.length} of ${ALL_ROWS.length} earnings shown`;

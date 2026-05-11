@@ -5,6 +5,7 @@
   <title>Social Stock Sentiment</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  <script src="{{ url_for('static', filename='sort.js') }}"></script>
 </head>
 <body>
   <header>
@@ -64,20 +65,20 @@
         <tr>
           <th></th>
           <th>#</th>
-          <th>Ticker</th>
-          <th>Sector</th>
-          <th>Price</th>
-          <th>Change %</th>
+          <th data-sort="ticker">Ticker</th>
+          <th data-sort="sector">Sector</th>
+          <th data-sort="price">Price</th>
+          <th data-sort="change">Change %</th>
           <th>Pre/Post</th>
-          <th>Mentions</th>
-          <th>Δ1h</th>
-          <th>Δ24h</th>
-          <th>z</th>
+          <th data-sort="mentions">Mentions</th>
+          <th data-sort="d1h">Δ1h</th>
+          <th data-sort="d24h">Δ24h</th>
+          <th data-sort="z">z</th>
           <th>24h activity</th>
-          <th>Sentiment</th>
-          <th>ΔSent 24h</th>
-          <th>Trend</th>
-          <th>Consensus</th>
+          <th data-sort="sentiment">Sentiment</th>
+          <th data-sort="dsent">ΔSent 24h</th>
+          <th data-sort="trend">Trend</th>
+          <th data-sort="consensus">Consensus</th>
           <th>Risk</th>
           <th>Catalyst</th>
           <th>Sources</th>
@@ -101,6 +102,7 @@
   const WL_KEY = "stocksent.watchlist.v1";
   let WATCHLIST = new Set(JSON.parse(localStorage.getItem(WL_KEY) || "[]"));
   let CURRENT_WINDOW = "now";
+  let CURRENT_DATA = null;  // most recent payload; sort handlers mutate .tickers
 
   function saveWL() {
     localStorage.setItem(WL_KEY, JSON.stringify([...WATCHLIST]));
@@ -254,6 +256,12 @@
   }
 
   function render(data) {
+    CURRENT_DATA = data;
+    // Preserve the original mention-rank across sorts so the # column
+    // always means "mention rank" regardless of the active sort.
+    (data.tickers || []).forEach((t, i) => {
+      if (t._rank == null) t._rank = i + 1;
+    });
     (data.watchlist || []).forEach(s => WATCHLIST.add(s));
     saveWL();
 
@@ -277,7 +285,7 @@
       const starred = WATCHLIST.has(t.symbol);
       tr.innerHTML = `
         <td class="star-cell"><span class="star" role="button" tabindex="0">${starred ? "★" : "☆"}</span></td>
-        <td>${i + 1}</td>
+        <td>${t._rank}</td>
         <td class="ticker"><a href="/ticker/${t.symbol}">${t.symbol}</a></td>
         <td class="sector muted">${(t.sector || "").slice(0, 18)}</td>
         <td class="price">${priceCell(t)}</td>
@@ -311,6 +319,27 @@
         toggleWatchlist(t.symbol);
       });
       tbody.appendChild(tr);
+    });
+
+    // Sortable column headers (idempotent).
+    makeSortable($("#board"), {
+      getRows: () => CURRENT_DATA.tickers,
+      setRows: (rows) => { CURRENT_DATA.tickers = rows; },
+      render:  () => render(CURRENT_DATA),
+      accessors: {
+        ticker:    r => r.symbol,
+        sector:    r => r.sector || "",
+        price:     r => r.price,
+        change:    r => r.change_pct,
+        mentions:  r => r.mentions,
+        d1h:       r => r.delta_mentions_1h,
+        d24h:      r => r.delta_mentions_24h,
+        z:         r => r.z_score,
+        sentiment: r => r.avg_sentiment,
+        dsent:     r => r.delta_sentiment_24h,
+        trend:     r => r.trend,
+        consensus: r => r.consensus,
+      },
     });
 
     const ts = new Date(data.generated_at * 1000).toLocaleString();
