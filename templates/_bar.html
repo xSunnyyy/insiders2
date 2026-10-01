@@ -1,0 +1,14 @@
+<div class="bar">
+  <a class="brand" href="/">insiders<span>.</span></a>
+  <form class="search" onsubmit="event.preventDefault(); const v=this.q.value.trim().toUpperCase().replace(/^\$/,''); if(v) location.href='/ticker/'+encodeURIComponent(v);">
+    <span aria-hidden="true">🔍</span>
+    <input name="q" placeholder="Search a ticker (e.g. NVDA)" autocomplete="off" />
+  </form>
+  <nav class="navlinks">
+    <a href="/" class="{{ 'active' if active == 'trending' }}">Trending</a>
+    <a href="/live" class="{{ 'active' if active == 'live' }}">Live scrape</a>
+    <a href="/insider" class="{{ 'active' if active == 'insider' }}">Insider</a>
+    <a href="/earnings" class="{{ 'active' if active == 'earnings' }}">Earnings</a>
+    <a href="/watchlist" class="{{ 'active' if active == 'watchlist' }}">Watchlist</a>
+  </nav>
+</div>

@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Trending Stocks — insiders</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='hub.css') }}" />
+  <script src="{{ url_for('static', filename='hub.js') }}"></script>
+</head>
+<body>
+  {% set active = 'trending' %}
+  {% include '_bar.html' %}
+  <div class="wrap">
+    <div class="crumbs"><a href="/">Home</a> › Trending Stocks</div>
+    <h1 class="page">Trending Stocks — {{ month }}</h1>
+    <p class="lede">
+      Live trending stocks across the places that move retail money —
+      WallStreetBets, Reddit, StockTwits, 4chan, insider trades, short-squeeze
+      candidates and meme stocks. {{ lists|length }} continuously-updated lists below.
+    </p>
+
+    <div class="banner">
+      <span>Get an alert the moment a stock you follow starts trending.</span>
+      <a class="btn" href="/watchlist">Set up free alerts →</a>
+    </div>
+
+    <div class="section-title">🔥 Hot right now</div>
+    <div class="section-desc">Tickers ranking highly on the most social lists at once.</div>
+    <div class="hot" id="hot">
+      {% for i in range(8) %}<div class="hot-card"><span class="logo fallback"></span><div class="meta"><div class="nm">&nbsp;</div><div class="sub">loading…</div></div></div>{% endfor %}
+    </div>
+
+    {% for g in groups %}
+      <div class="section-title">{{ g.title }}</div>
+      <div class="section-desc">{{ g.desc }}</div>
+      <div class="cards">
+        {% for l in lists if l.group == g.id %}
+          <a class="card" href="{{ l.href or ('/trending/' ~ l.slug) }}">
+            <div class="hero g-{{ l.slug }}">
+              <div class="emoji">{{ l.icon }}</div>
+              <div class="tops" data-preview="{{ l.slug }}"></div>
+            </div>
+            <div class="body">
+              <div class="t">{{ l.title }}</div>
+              <div class="d">{{ l.desc }}</div>
+            </div>
+          </a>
+        {% endfor %}
+      </div>
+    {% endfor %}
+
+    <div class="method">
+      <h3>Where the numbers come from</h3>
+      Mention counts and 24h-ago comparisons: ApeWisdom (Reddit + 4chan).
+      Trending ranks: StockTwits. Sentiment: poster-tagged StockTwits bull/bear
+      messages, Tradestie's WallStreetBets model, and our own finance-tuned
+      VADER scoring of 4chan /biz/ threads. Prices: Nasdaq (Yahoo fallback).
+      Insider buys: SEC Form 4 via OpenInsider. The 0–100 <b>score</b> blends
+      sentiment, mention momentum, 1-day and 1-month price action, position vs
+      the 50-day average and recent insider buying. It's a transparent
+      heuristic, not a forecast — not financial advice.
+    </div>
+  </div>
+
+<script>
+async function load() {
+  let d;
+  try {
+    const r = await fetch("/api/hub");
+    d = await r.json();
+  } catch (e) {
+    document.getElementById("hot").innerHTML = `<div class="empty">Couldn't load: ${esc(e)}</div>`;
+    return;
+  }
+  document.getElementById("hot").innerHTML = (d.hot || []).map((h) => `
+    <a class="hot-card" href="/ticker/${esc(h.symbol)}" title="On: ${esc(h.lists.join(", "))}">
+      ${logoHtml(h.symbol, h.logo)}
+      <div class="meta">
+        <div class="nm">${esc(h.name)}</div>
+        <div class="sub">${esc(h.symbol)} · ${fmtPrice(h.price)}
+          <span class="delta ${h.change_pct > 0 ? "up" : h.change_pct < 0 ? "down" : "flat"}" style="display:inline">${h.change_pct == null ? "" : (h.change_pct > 0 ? "+" : "") + h.change_pct.toFixed(1) + "%"}</span></div>
+      </div>
+      ${ringHtml(h.score)}
+    </a>`).join("") || `<div class="empty">No data yet.</div>`;
+  for (const l of d.lists || []) {
+    const el = document.querySelector(`[data-preview="${l.slug}"]`);
+    if (el) el.innerHTML = l.preview.map((p) => `<span>${esc(p.symbol)}</span>`).join("");
+  }
+}
+load();
+</script>
+</body>
+</html>

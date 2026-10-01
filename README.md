@@ -1,7 +1,39 @@
 # Social Stock Sentiment
 
+## Trending hub (AltIndex-style, free)
+
+The home page (`/`) works like AltIndex's trending stocks page and needs no API keys:
+
+- **🔥 Hot right now**: tickers ranking high on the most social lists at once.
+- **14 lists** at `/trending/<slug>`: WallStreetBets, all of Reddit, Reddit
+  stocks to buy, StockTwits, 4chan /biz/, r/stocks, r/investing, r/options,
+  r/Daytrading, penny stocks, short-squeeze candidates, meme stocks, fastest
+  rising, and insider buying. Earnings and the live all-source scrape (`/live`)
+  are linked from the hub too.
+- Each row shows the company logo and name, the mention count with its change
+  vs 24h ago, sentiment, price with day change, a 1-month sparkline, and a
+  **0–100 score**.
+
+| Data            | Source (free, no key)                                          |
+|-----------------|----------------------------------------------------------------|
+| Mentions + 24h  | ApeWisdom API (Reddit subs + 4chan)                            |
+| StockTwits rank | StockTwits trending symbols                                    |
+| Sentiment       | StockTwits bull/bear tags + Tradestie WSB + VADER on /biz/     |
+| Prices / 1M     | Nasdaq quote API, Yahoo chart fallback, then `prices.py` tiers |
+| Insider buys    | OpenInsider / Yahoo (existing `insider.py`)                    |
+
+**Score**: weighted blend of sentiment (35%), mention momentum vs 24h ago (20%),
+1-month return + position vs the 50-day average (20%), insider buying in the
+last 30 days (15%) and today's move (10%). Missing signals are dropped and the
+rest re-weighted. Hover a score to see its parts. It's a transparent heuristic,
+not a forecast.
+
+API: `GET /api/hub`, `GET /api/lists`, `GET /api/lists/<slug>`,
+`POST /api/lists/<slug>/refresh`. Lists are cached for 10 minutes
+(stale-while-revalidate).
+
 A small Flask web app that scrapes social media for stock chatter and shows the
-top-20 most-mentioned tickers with a bullish / bearish / neutral trend.
+top-20 most-mentioned tickers (now at `/live`) with a bullish / bearish / neutral trend.
 
 ## Sources
 

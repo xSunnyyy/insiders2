@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ cfg.title }} — insiders</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='hub.css') }}" />
+  <script src="{{ url_for('static', filename='hub.js') }}"></script>
+</head>
+<body>
+  {% set active = 'trending' %}
+  {% include '_bar.html' %}
+  <div class="wrap">
+    <div class="crumbs"><a href="/">Home</a> › <a href="/">Trending Stocks</a> › {{ cfg.short }}</div>
+    <h1 class="left">{{ cfg.title }}{% if cfg.metric_label == 'Mentions' %} Today{% endif %}</h1>
+    <div class="live"><span class="dot"></span>Live · Last refreshed <b id="refreshed">…</b></div>
+    <p class="lede left">{{ cfg.desc }} Prices, sentiment and our 0–100 score are
+      refreshed every few minutes{% if cfg.metric_label == 'Mentions' %}; the
+      change under each mention count compares against the same window 24 hours
+      earlier{% endif %}.</p>
+
+    <div class="banner">
+      <span>Get an alert the moment a stock you follow starts trending.</span>
+      <a class="btn" href="/watchlist">Set up free alerts →</a>
+    </div>
+
+    <div class="toolbar">
+      <button class="btn ghost" id="refresh">Refresh now</button>
+      <span class="status" id="status"></span>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="list" id="tbl">
+        <thead>
+          <tr>
+            <th data-k="name">Company</th>
+            <th data-k="mentions">{{ cfg.metric_label }}</th>
+            <th data-k="sentiment_score">Sentiment</th>
+            <th data-k="price">Price</th>
+            <th data-k="ret_1m" class="hide-sm">1M</th>
+            <th data-k="score" title="0–100 blend of sentiment, buzz momentum, price trend and insider buying">Score</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for i in range(10) %}
+          <tr class="skeleton"><td><div style="width:160px"></div></td><td><div style="width:50px"></div></td><td><div style="width:70px"></div></td><td><div style="width:60px"></div></td><td class="hide-sm"><div style="width:80px"></div></td><td><div style="width:36px"></div></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="empty" id="empty" hidden></div>
+    </div>
+
+    <div class="method">
+      <h3>How the score works</h3>
+      Each signal is normalised to 0–100 and weighted: sentiment 35%, mention
+      momentum vs 24h ago 20%, 1-month trend + 50-day average 20%, recent
+      insider buying 15%, today's price move 10%. Signals we couldn't fetch are
+      dropped and the rest re-weighted. Hover a score to see its parts. It's a
+      transparent heuristic, not a forecast — not financial advice.
+    </div>
+  </div>
+
+<script>
+const SLUG = {{ slug|tojson }};
+const METRIC = {{ cfg.metric_label|tojson }};
+let rows = [];
+let sortKey = null, sortAsc = false;
+
+function metricCell(r) {
+  if (r.metric === "insider_value") {
+    return `<div class="num">$${fmtNum(r.mentions)}</div><div class="delta flat">${r.insider_count} buy${r.insider_count === 1 ? "" : "s"}</div>`;
+  }
+  if (r.metric === "trend_score") {
+    return `<div class="num">${r.mentions}</div>`;
+  }
+  return `<div class="num">${(r.mentions ?? 0).toLocaleString()}</div>${deltaHtml(r.mention_change_pct)}`;
+}
+
+function scoreTitle(r) {
+  const p = r.score_parts || {};
+  return Object.entries(p).map(([k, v]) => `${k}: ${v}`).join(" · ") || "not enough data";
+}
+
+function render() {
+  const tb = document.querySelector("#tbl tbody");
+  let list = rows.slice();
+  if (sortKey) {
+    list.sort((a, b) => {
+      let x = a[sortKey], y = b[sortKey];
+      if (x == null) return 1; if (y == null) return -1;
+      if (typeof x === "string") return sortAsc ? x.localeCompare(y) : y.localeCompare(x);
+      return sortAsc ? x - y : y - x;
+    });
+  }
+  tb.innerHTML = list.map((r) => `
+    <tr>
+      <td><a class="co" href="/ticker/${esc(r.symbol)}">
+        ${logoHtml(r.symbol, r.logo)}
+        <div><div class="nm">${esc(r.name)}${r.insider_buys && r.metric !== "insider_value" ? `<span class="badge" title="Insider purchases in the last 30 days">INSIDER BUY</span>` : ""}</div>
+             <div class="sym">${esc(r.symbol)}</div>
+             ${r.summary ? `<div class="summary">${esc(r.summary.slice(0, 160))}${r.summary.length > 160 ? "…" : ""}</div>` : ""}</div>
+      </a></td>
+      <td>${metricCell(r)}</td>
+      <td><span class="pill ${esc(r.sentiment)}">${esc(r.sentiment)}</span></td>
+      <td><div class="num">${fmtPrice(r.price)}</div>${deltaHtml(r.change_pct)}</td>
+      <td class="hide-sm">${sparkSvg(r.spark)}<div class="delta ${r.ret_1m > 0 ? "up" : r.ret_1m < 0 ? "down" : "flat"}">${r.ret_1m == null ? "" : (r.ret_1m > 0 ? "+" : "") + r.ret_1m.toFixed(1) + "%"}</div></td>
+      <td><span title="${esc(scoreTitle(r))}">${ringHtml(r.score)}</span></td>
+    </tr>`).join("");
+  document.getElementById("empty").hidden = list.length > 0;
+  document.getElementById("empty").textContent = SLUG === "insider-buying"
+    ? "No insider purchases cached yet — the SEC/OpenInsider fetch can take a minute on first load. Try Refresh."
+    : "Nothing on this list right now.";
+  document.querySelectorAll("#tbl th").forEach((th) => {
+    th.classList.toggle("sorted", th.dataset.k === sortKey);
+    th.classList.toggle("asc", th.dataset.k === sortKey && sortAsc);
+  });
+}
+
+document.querySelectorAll("#tbl th").forEach((th) => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  if (sortKey === k) sortAsc = !sortAsc; else { sortKey = k; sortAsc = k === "name"; }
+  render();
+}));
+
+async function load(force = false) {
+  const st = document.getElementById("status");
+  st.textContent = force ? "Refreshing… (can take ~30s)" : "";
+  try {
+    const r = await fetch(`/api/lists/${SLUG}${force ? "/refresh" : ""}`, { method: force ? "POST" : "GET" });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.error || r.status);
+    rows = d.rows || [];
+    const when = new Date(d.generated_at * 1000);
+    document.getElementById("refreshed").textContent =
+      when.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    st.textContent = d.stale ? `Showing data from ${ago(d.age_sec)} — updating in the background.` : "";
+    render();
+    if (d.stale) setTimeout(() => load(), 30000);
+  } catch (e) {
+    st.textContent = "Load failed: " + e.message;
+  }
+}
+document.getElementById("refresh").addEventListener("click", () => load(true));
+load();
+</script>
+</body>
+</html>

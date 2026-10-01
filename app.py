@@ -18,6 +18,7 @@ import earnings as earnings_mod
 import insider as insider_mod
 import prices
 import sentiment
+import trending as trending_lists
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -191,9 +192,64 @@ def get_data(force: bool = False, window: str = "now",
     return data
 
 
+# Extra hub cards that link to existing pages rather than a trending list.
+_EXTRA_CARDS = [
+    {"slug": "earnings", "href": "/earnings", "group": "insiders",
+     "icon": "📅", "short": "Earnings", "title": "Upcoming Earnings",
+     "desc": "Every company reporting in the next two weeks."},
+    {"slug": "live", "href": "/live", "group": "social", "icon": "🛰️",
+     "short": "Live scrape", "title": "Live All-Source Scrape",
+     "desc": "Our own real-time scrape of Reddit, StockTwits, Bluesky and X "
+             "with per-source sentiment, deltas and risk flags."},
+]
+
+
 @app.route("/")
 def index():
+    lists = [{"slug": s, **c} for s, c in trending_lists.LISTS.items()] + _EXTRA_CARDS
+    groups = [{"id": g, "title": t, "desc": d} for g, t, d in trending_lists.GROUPS]
+    return render_template("trending.html", lists=lists, groups=groups,
+                           month=time.strftime("%B %Y"))
+
+
+@app.route("/trending/<slug>")
+def trending_list_page(slug: str):
+    cfg = trending_lists.LISTS.get(slug)
+    if cfg is None:
+        return render_template("trending.html", lists=[], groups=[],
+                               month=time.strftime("%B %Y")), 404
+    cfg = {"metric_label": "Mentions", **cfg}
+    return render_template("list.html", slug=slug, cfg=cfg)
+
+
+@app.route("/live")
+def live_page():
     return render_template("index.html")
+
+
+@app.route("/api/hub")
+def hub_api():
+    return jsonify(trending_lists.get_hub())
+
+
+@app.route("/api/lists")
+def lists_api():
+    return jsonify({"lists": [{"slug": s, "title": c["title"], "desc": c["desc"]}
+                              for s, c in trending_lists.LISTS.items()]})
+
+
+@app.route("/api/lists/<slug>")
+def list_api(slug: str):
+    if slug not in trending_lists.LISTS:
+        return jsonify({"error": "unknown list"}), 404
+    return jsonify(trending_lists.get_list(slug, allow_stale=True))
+
+
+@app.route("/api/lists/<slug>/refresh", methods=["POST"])
+def list_refresh_api(slug: str):
+    if slug not in trending_lists.LISTS:
+        return jsonify({"error": "unknown list"}), 404
+    return jsonify(trending_lists.get_list(slug, force=True))
 
 
 @app.route("/ticker/<symbol>")
